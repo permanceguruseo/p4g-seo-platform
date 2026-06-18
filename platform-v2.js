@@ -192,7 +192,7 @@ function getManifest() {
   return { name:'P4G SEO Platform', short_name:'P4G SEO', description:'Per4mance Guru SEO Automation Platform', start_url:'/', display:'standalone', background_color:'#080c14', theme_color:'#3b82f6', icons:[{src:'/icon.svg',sizes:'192x192',type:'image/svg+xml'},{src:'/icon.svg',sizes:'512x512',type:'image/svg+xml'}], shortcuts:[{name:'Dashboard',url:'/'},{name:'Clients',url:'/?page=clients'},{name:'Alerts',url:'/?page=alerts'},{name:'Bot Engine',url:'/?page=botcontrol'}] };
 }
 
-app.get('/{*path}', (req, res) => {
+app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(getDashboardHTML());
 });

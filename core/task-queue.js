@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const { EventEmitter } = require('events');
-const db               = require('./database');
+const db               = require('./database-v2');
 const notify           = require('./notification');
 const logger           = require('./logger');
 

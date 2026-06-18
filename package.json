@@ -1,0 +1,41 @@
+{
+  "name": "p4g-bot-dashboard",
+  "version": "1.0.0",
+  "description": "Per4mance Guru Bot Dashboard",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "npm run build-win",
+    "build-win": "electron-builder --win"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "googleapis": "latest",
+    "multer": "^2.2.0",
+    "playwright": "^1.61.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.per4manceguru.bot",
+    "productName": "P4G Bot Dashboard",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

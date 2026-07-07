@@ -192,137 +192,36 @@ function getManifest() {
   return { name:'P4G SEO Platform', short_name:'P4G SEO', description:'Per4mance Guru SEO Automation Platform', start_url:'/', display:'standalone', background_color:'#080c14', theme_color:'#3b82f6', icons:[{src:'/icon.svg',sizes:'192x192',type:'image/svg+xml'},{src:'/icon.svg',sizes:'512x512',type:'image/svg+xml'}], shortcuts:[{name:'Dashboard',url:'/'},{name:'Clients',url:'/?page=clients'},{name:'Alerts',url:'/?page=alerts'},{name:'Bot Engine',url:'/?page=botcontrol'}] };
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-//  P4G ADD-ON (GEMINI / FREE) — 11 bots in dropdowns + AI client Auto-fill
-//  Paste this block IN PLACE OF your existing 4-line  app.get('*', ...)  block.
-//  Uses Google Gemini (free tier). Needs env var:  GEMINI_API_KEY
-// ══════════════════════════════════════════════════════════════════════════
-
-// ── AI client auto-fill via Google Gemini (free) ──
+// ─── CLIENT AUTO-FILL (AI enrich from URL, free Gemini) ──────────────────────
 app.post('/api/clients/enrich', async (req, res) => {
   try {
     let { url } = req.body;
     if (!url) return res.json({ success: false, error: 'No URL provided' });
     if (!process.env.GEMINI_API_KEY) return res.json({ success: false, error: 'GEMINI_API_KEY not set on server' });
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-
     let html = '';
-    try {
-      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; P4GBot/1.0)' } });
-      html = await r.text();
-    } catch (e) { html = ''; }
-
-    const text = html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .slice(0, 8000);
-
-    const prompt = 'From this business website, extract the company details as STRICT JSON only (no markdown fences, no preamble). Empty string if not found.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
-
+    try { const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; P4GBot/1.0)' } }); html = await r.text(); } catch (e) { html = ''; }
+    const text = html.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0, 8000);
+    const prompt = 'From this business website, extract details as STRICT JSON only (no markdown). Empty string if unknown.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
     const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json' } }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json' } })
     });
     const data = await gr.json();
-    if (data.error) return res.json({ success: false, error: data.error.message || 'Gemini request failed' });
-
-    let raw = '';
-    try { raw = data.candidates[0].content.parts.map(p => p.text).join(''); } catch { raw = ''; }
-    raw = raw.replace(/```json|```/g, '').trim();
+    if (data.error) return res.json({ success: false, error: data.error.message || 'Gemini failed' });
+    let raw = ''; try { raw = data.candidates[0].content.parts.map(p => p.text).join(''); } catch { raw = ''; }
+    raw = raw.replace(/```json|```/g,'').trim();
     let info = {};
-    try {
-      info = JSON.parse(raw);
-    } catch {
-      // model added extra text — grab the first {...} block
-      const m = raw.match(/\{[\s\S]*\}/);
-      if (m) { try { info = JSON.parse(m[0]); } catch { info = null; } }
-      if (!info) return res.json({ success: false, error: 'Could not parse AI response', raw: raw.slice(0, 300) });
-    }
+    try { info = JSON.parse(raw); } catch { const m = raw.match(/\{[\s\S]*\}/); if (m) { try { info = JSON.parse(m[0]); } catch { info = null; } } if (!info) return res.json({ success:false, error:'Could not parse AI response' }); }
     info.website = url;
     res.json({ success: true, info });
   } catch (e) { res.json({ success: false, error: e.message }); }
 });
 
-// ── the enhancement script injected into every page (adds bots + auto-fill) ──
-const P4G_ENHANCE = `<script>
-(function(){
-  try{
-    var BOTS=[["directory","📋 Directory Bot"],["article","📝 Article Bot"],["rss","📡 RSS Bot"],["microblog","💬 Microblog Bot"],["web2","🌐 Web 2.0 Bot"],["guestpost","✍️ Guest Post Bot"],["pptpdf","📄 PPT/PDF Bot"],["image","🖼️ Image Bot"],["classified","📢 Classified Bot"],["pressrelease","📰 Press Release Bot"],["profile","👤 Profile Bot"]];
-    function optsHTML(sel){var h="";for(var i=0;i<BOTS.length;i++){h+='<option value="'+BOTS[i][0]+'"'+(sel===BOTS[i][0]?" selected":"")+'>'+BOTS[i][1]+"</option>";}return h;}
-    function fixDropdowns(){
-      var sels=document.querySelectorAll("select");
-      for(var i=0;i<sels.length;i++){var s=sels[i];var isBot=false;
-        for(var j=0;j<s.options.length;j++){var v=s.options[j].value;if(v==="directory"||v==="profile"||v==="blog"||v==="guest"||v==="social"||v==="citation"||v==="web2"){isBot=true;break;}}
-        if(isBot&&!s.getAttribute("data-p4g")){var cur=s.value;s.innerHTML=optsHTML(cur);s.setAttribute("data-p4g","1");}}
-    }
-    var st=document.createElement("style");
-    st.textContent=".bb-article{background:rgba(59,130,246,.15);color:#3b82f6}.bb-rss{background:rgba(249,115,22,.15);color:#f97316}.bb-microblog{background:rgba(236,72,153,.15);color:#ec4899}.bb-pptpdf{background:rgba(6,182,212,.15);color:#06b6d4}.bb-image{background:rgba(168,85,247,.15);color:#a855f7}.bb-classified{background:rgba(234,179,8,.15);color:#eab308}.bb-pressrelease{background:rgba(34,197,94,.15);color:#22c55e}.bb-guestpost{background:rgba(249,115,22,.15);color:#f97316}.bb-web2{background:rgba(168,85,247,.15);color:#a855f7}";
-    document.head.appendChild(st);
-    function fieldKey(el){var lab="";if(el.labels&&el.labels[0])lab=el.labels[0].innerText;return ((el.name||"")+" "+(el.id||"")+" "+(el.placeholder||"")+" "+lab).toLowerCase();}
-    function fillModal(info){var f=document.querySelectorAll("input, textarea");var n=0;
-      for(var i=0;i<f.length;i++){var el=f[i];if(!el.offsetParent)continue;var t=(el.type||"").toLowerCase();
-        if(["hidden","submit","button","file","checkbox","radio"].indexOf(t)>=0)continue;var h=fieldKey(el);var val="";
-        if(/business.?name|company|brand|biz/.test(h))val=info.bizName||info.name;
-        else if(/full.?name|contact.?name|owner|^name| name/.test(h))val=info.name||info.bizName;
-        else if(/website|url|web/.test(h))val=info.website;
-        else if(/e-?mail/.test(h))val=info.email;
-        else if(/mobile|whatsapp/.test(h))val=info.mobile||info.phone;
-        else if(/phone|tel|number/.test(h))val=info.phone||info.mobile;
-        else if(/category|industry|sector|niche|type/.test(h))val=info.category;
-        else if(/address|street/.test(h))val=info.address;
-        else if(/city|town/.test(h))val=info.city;
-        else if(/state|province/.test(h))val=info.state;
-        else if(/zip|postal|pin/.test(h))val=info.zip;
-        else if(/country/.test(h))val=info.country;
-        else if(/primary.?key|keyword|main.?key/.test(h))val=info.primaryKeyword;
-        else if(/secondary.?key/.test(h))val=info.secondaryKeyword;
-        else if(/location|area|region/.test(h))val=info.targetLocation||info.city;
-        else if(/facebook|fb/.test(h))val=info.facebook;
-        else if(/instagram|insta|ig/.test(h))val=info.instagram;
-        else if(/linkedin/.test(h))val=info.linkedin;
-        else if(/youtube|yt/.test(h))val=info.youtube;
-        else if(/twitter/.test(h))val=info.twitter;
-        else if(/short.?desc|tagline|summary/.test(h))val=info.shortDesc;
-        else if(/desc|about|detail|bio/.test(h))val=info.longDesc||info.shortDesc;
-        if(val){el.value=val;el.dispatchEvent(new Event("input",{bubbles:true}));n++;}}
-      return n;}
-    function injectBar(){
-      var inputs=document.querySelectorAll("input");var target=null;
-      for(var i=0;i<inputs.length;i++){var h=fieldKey(inputs[i]);if(/website|url|web/.test(h)&&inputs[i].offsetParent){target=inputs[i];break;}}
-      if(!target)return;
-      var host=target.closest("form")||target.closest("[class*=modal],[id*=modal],[class*=Modal]")||target.parentNode;
-      if(!host||host.querySelector("#p4g-enrich-bar"))return;
-      var bar=document.createElement("div");bar.id="p4g-enrich-bar";
-      bar.style.cssText="display:flex;gap:8px;margin:10px 0;align-items:center;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:10px";
-      bar.innerHTML='<input id="p4g-enrich-url" placeholder="Paste client website URL to auto-fill..." style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid rgba(148,163,184,.35);background:transparent;color:inherit"/><button id="p4g-enrich-btn" type="button" style="padding:8px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer;white-space:nowrap">🔍 Auto-fill</button>';
-      host.insertBefore(bar,host.firstChild);
-      document.getElementById("p4g-enrich-btn").onclick=async function(){
-        var u=(document.getElementById("p4g-enrich-url").value||target.value||"").trim();
-        if(!u){alert("Enter a website URL first");return;}
-        var b=this;b.disabled=true;b.textContent="⏳ Reading website...";
-        try{var res=await fetch("/api/clients/enrich",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:u})});var r=await res.json();
-          if(r&&r.success){var c=fillModal(r.info||{});b.textContent="✅ Filled "+c+" fields";}
-          else{b.textContent="❌ Failed";alert("Auto-fill failed: "+((r&&r.error)||"unknown"));}
-        }catch(e){b.textContent="❌ Error";alert("Error: "+e.message);}
-        setTimeout(function(){b.disabled=false;b.textContent="🔍 Auto-fill";},2500);};
-    }
-    setInterval(function(){try{fixDropdowns();injectBar();}catch(e){}},1200);
-    fixDropdowns();
-  }catch(e){console.log("p4g enhance err",e);}
-})();
-</script>`;
-
-// ── serve the dashboard with the enhancement appended ──
 app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  let __html = getDashboardHTML();
-  try { __html = __html.replace('</body>', P4G_ENHANCE + '</body>'); } catch (e) {}
-  res.send(__html);
+  res.send(getDashboardHTML());
 });
-
 
 
 function getDashboardHTML() {
@@ -330,870 +229,792 @@ function getDashboardHTML() {
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
-<meta name="theme-color" content="#3b82f6"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-title" content="P4G SEO"/>
-<title>P4G SEO Automation Platform</title>
-<link rel="manifest" href="/manifest.json"/>
-<link rel="icon" href="/icon.svg"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>P4G — Backlink Command</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;450;500;600&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#080c14;--s1:#0e1420;--s2:#141c2e;--s3:#1a2540;--border:#1e2d45;--blue:#3b82f6;--indigo:#6366f1;--green:#22c55e;--yellow:#eab308;--red:#ef4444;--orange:#f97316;--pink:#ec4899;--cyan:#06b6d4;--purple:#a855f7;--text:#f1f5f9;--muted:#64748b;}
-*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:13px;min-height:100vh;overflow-x:hidden}
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:52px;background:var(--s1);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:200;gap:10px}
-.brand{font-weight:800;font-size:15px;display:flex;align-items:center;gap:8px;white-space:nowrap}
-.brand-logo{width:30px;height:30px;background:var(--blue);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
-.live-dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
-.live-dot.running{background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.5s infinite}
-.live-dot.paused{background:var(--yellow);animation:blink 1s infinite}
-.live-dot.stopped{background:var(--red)}
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
-.layout{display:flex;height:calc(100vh - 52px)}
-.sidebar{width:220px;flex-shrink:0;background:var(--s1);border-right:1px solid var(--border);overflow-y:auto}
-.sb-sec{padding:8px 0}
-.sb-lbl{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;padding:6px 14px 3px}
-.sb-item{display:flex;align-items:center;gap:9px;padding:8px 12px;cursor:pointer;transition:background .1s;border-right:2px solid transparent;user-select:none}
-.sb-item:hover{background:var(--s2)}
-.sb-item.active{background:rgba(59,130,246,.1);border-right-color:var(--blue)}
-.sb-item.active .sb-name{color:var(--blue)}
-.sb-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
-.sb-name{font-size:12px;font-weight:600;white-space:nowrap}
-.sb-badge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;flex-shrink:0}
-.content{flex:1;overflow-y:auto;padding:18px 20px}
-.btn{padding:7px 13px;border-radius:7px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:5px;font-family:inherit;white-space:nowrap}
-.btn:active{transform:scale(.97)}
-.btn-blue{background:var(--blue);color:#fff}
-.btn-green{background:#14532d;color:#86efac}
-.btn-yellow{background:#713f12;color:#fde68a}
-.btn-red{background:#7f1d1d;color:#fca5a5}
-.btn-orange{background:#7c2d12;color:#fed7aa}
-.btn-ghost{background:var(--s2);color:var(--text);border:1px solid var(--border)}
-.btn-ghost:hover{background:var(--s3)}
-.btn-sm{padding:5px 10px;font-size:11px;border-radius:5px}
-.btn-block{width:100%;justify-content:center;padding:11px}
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-bottom:18px}
-.stat-card{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px;position:relative;overflow:hidden}
-.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
-.stat-blue::before{background:var(--blue)}.stat-green::before{background:var(--green)}.stat-yellow::before{background:var(--yellow)}.stat-red::before{background:var(--red)}.stat-purple::before{background:var(--purple)}.stat-cyan::before{background:var(--cyan)}.stat-orange::before{background:var(--orange)}
-.stat-label{font-size:9px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
-.stat-val{font-size:24px;font-weight:800;letter-spacing:-1px;line-height:1}
-.card{background:var(--s1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
-.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px}
-.card-title{font-size:13px;font-weight:700;display:flex;align-items:center;gap:7px}
+:root{
+  --bg:#F6F7F9; --surface:#FFFFFF; --surface-2:#FBFCFD;
+  --ink:#171A21; --ink-soft:#454B57; --muted:#8A909E; --faint:#B6BCC8;
+  --border:#EAECF1; --border-2:#E0E3EA;
+  --primary:#4636E6; --primary-soft:#EEECFD; --primary-ink:#3A2CC9;
+  --green:#12A150; --green-soft:#E5F5EC;
+  --amber:#C77700; --amber-soft:#FBF0DD;
+  --red:#D64545; --red-soft:#FBE9E9;
+  --cyan:#0E8FA8; --pink:#C42B7A; --violet:#7C3AED; --orange:#DC6803;
+  --shadow-sm:0 1px 2px rgba(23,26,33,.04),0 1px 3px rgba(23,26,33,.06);
+  --shadow-md:0 4px 12px rgba(23,26,33,.06),0 2px 4px rgba(23,26,33,.04);
+  --shadow-lg:0 12px 32px rgba(23,26,33,.10),0 4px 8px rgba(23,26,33,.05);
+  --r:14px; --r-sm:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink);
+  -webkit-font-smoothing:antialiased;font-size:14px;line-height:1.5;
+}
+::selection{background:var(--primary-soft);color:var(--primary-ink)}
+h1,h2,h3,h4{font-family:'Space Grotesk',sans-serif;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+.mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+button{font-family:inherit;cursor:pointer;border:none;background:none}
+input,select,textarea{font-family:inherit;font-size:14px}
+a{color:inherit;text-decoration:none}
+
+/* ---------- shell ---------- */
+.app{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+.sidebar{
+  background:var(--surface);border-right:1px solid var(--border);
+  padding:22px 16px;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;gap:6px;
+}
+.brand{display:flex;align-items:center;gap:11px;padding:6px 8px 20px;margin-bottom:6px}
+.brand-mark{
+  width:36px;height:36px;border-radius:10px;flex-shrink:0;position:relative;
+  background:linear-gradient(135deg,var(--primary),#6B5CFF);
+  box-shadow:0 4px 10px rgba(70,54,230,.28);
+}
+.brand-mark::before,.brand-mark::after{
+  content:"";position:absolute;width:11px;height:6px;border:2px solid #fff;border-radius:6px;
+}
+.brand-mark::before{top:12px;left:8px;transform:rotate(-40deg)}
+.brand-mark::after{top:17px;left:14px;transform:rotate(-40deg)}
+.brand-name{font-family:'Space Grotesk';font-weight:700;font-size:16px;letter-spacing:-.02em}
+.brand-sub{font-size:11px;color:var(--muted);margin-top:1px;letter-spacing:.01em}
+.nav-label{font-size:11px;font-weight:600;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:14px 10px 6px}
+.nav-item{
+  display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:var(--r-sm);
+  color:var(--ink-soft);font-weight:500;font-size:13.5px;transition:all .16s ease;position:relative;
+}
+.nav-item svg{width:18px;height:18px;stroke-width:1.9;flex-shrink:0;opacity:.85}
+.nav-item:hover{background:var(--surface-2);color:var(--ink)}
+.nav-item.active{background:var(--primary-soft);color:var(--primary-ink);font-weight:600}
+.nav-item.active svg{opacity:1}
+.nav-badge{margin-left:auto;font-size:11px;font-weight:600;background:var(--surface-2);color:var(--muted);
+  padding:1px 7px;border-radius:20px;min-width:20px;text-align:center}
+.nav-item.active .nav-badge{background:#fff;color:var(--primary-ink)}
+.side-foot{margin-top:auto;padding:12px 10px 4px;border-top:1px solid var(--border);font-size:12px;color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px}
+.dot.live{background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+.dot.demo{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft)}
+
+/* ---------- main ---------- */
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{
+  display:flex;align-items:center;gap:16px;padding:18px 30px;
+  border-bottom:1px solid var(--border);background:rgba(246,247,249,.82);
+  backdrop-filter:blur(8px);position:sticky;top:0;z-index:20;
+}
+.page-title h1{font-size:21px}
+.page-title p{font-size:12.5px;color:var(--muted);margin-top:2px}
+.search{
+  margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;width:230px;transition:all .16s;
+}
+.search:focus-within{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.search svg{width:15px;height:15px;color:var(--muted);flex-shrink:0}
+.search input{border:none;outline:none;width:100%;background:none;color:var(--ink)}
+.btn{
+  display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:var(--r-sm);
+  font-weight:600;font-size:13.5px;transition:all .16s ease;white-space:nowrap;
+}
+.btn svg{width:16px;height:16px;stroke-width:2}
+.btn-primary{background:var(--primary);color:#fff;box-shadow:0 2px 6px rgba(70,54,230,.25)}
+.btn-primary:hover{background:var(--primary-ink);box-shadow:0 4px 12px rgba(70,54,230,.32);transform:translateY(-1px)}
+.btn-ghost{background:var(--surface);color:var(--ink-soft);border:1px solid var(--border)}
+.btn-ghost:hover{border-color:var(--border-2);background:var(--surface-2)}
+.btn-sm{padding:6px 11px;font-size:12.5px;border-radius:8px}
+
+.content{padding:26px 30px 60px;flex:1}
+.page{display:none;animation:fadeUp .38s cubic-bezier(.22,.61,.36,1)}
+.page.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* ---------- stat cards ---------- */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px}
+.stat{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px 18px 16px;
+  box-shadow:var(--shadow-sm);transition:all .2s ease;position:relative;overflow:hidden;
+}
+.stat:hover{box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.stat-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.stat-ico{width:36px;height:36px;border-radius:10px;display:grid;place-items:center}
+.stat-ico svg{width:19px;height:19px;stroke-width:2}
+.stat-trend{font-size:11.5px;font-weight:600;color:var(--green);background:var(--green-soft);padding:2px 8px;border-radius:20px}
+.stat-val{font-family:'Space Grotesk';font-size:30px;font-weight:600;letter-spacing:-.03em;line-height:1}
+.stat-label{font-size:12.5px;color:var(--muted);margin-top:6px;font-weight:500}
+
+/* ---------- panels ---------- */
+.grid-2{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;margin-bottom:16px}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow-sm)}
+.panel-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border)}
+.panel-head h3{font-size:15px}
+.panel-head .sub{font-size:12px;color:var(--muted);font-weight:400;margin-top:2px}
+.panel-body{padding:16px 18px}
+.link-btn{font-size:12.5px;color:var(--primary);font-weight:600;display:inline-flex;align-items:center;gap:4px}
+.link-btn:hover{color:var(--primary-ink)}
+
+/* ---------- bot fleet ---------- */
+.fleet{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.bot{
+  display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid var(--border);
+  border-radius:var(--r-sm);background:var(--surface-2);transition:all .18s ease;
+}
+.bot:hover{border-color:var(--border-2);background:var(--surface);box-shadow:var(--shadow-sm)}
+.bot-ico{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-size:15px;flex-shrink:0}
+.bot-info{min-width:0;flex:1}
+.bot-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bot-meta{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-top:1px}
+.pulse{width:6px;height:6px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.bot.running .pulse{background:var(--green);animation:pulse 1.6s infinite}
+.bot.running .bot-meta{color:var(--green)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(18,161,80,.4)}70%{box-shadow:0 0 0 6px rgba(18,161,80,0)}100%{box-shadow:0 0 0 0 rgba(18,161,80,0)}}
+
+/* ---------- attention (calm, no popup) ---------- */
+.attention{padding:14px 16px;border-radius:var(--r-sm);border:1px solid var(--amber-soft);
+  background:linear-gradient(0deg,#FEFBF4,#fff);display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
+.attention:last-child{margin-bottom:0}
+.att-ico{width:30px;height:30px;border-radius:8px;background:var(--amber-soft);color:var(--amber);
+  display:grid;place-items:center;flex-shrink:0}
+.att-ico svg{width:16px;height:16px}
+.att-body{flex:1;min-width:0}
+.att-title{font-size:13px;font-weight:600}
+.att-desc{font-size:12px;color:var(--muted);margin-top:1px}
+.att-actions{display:flex;gap:6px;margin-top:9px}
+.empty{text-align:center;padding:34px 20px;color:var(--muted)}
+.empty svg{width:34px;height:34px;color:var(--faint);margin-bottom:10px;stroke-width:1.5}
+.empty h4{font-size:14px;color:var(--ink-soft);margin-bottom:3px;font-weight:600}
+.empty p{font-size:12.5px}
+
+/* ---------- table ---------- */
 .table-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;min-width:600px}
-thead th{padding:8px 12px;text-align:left;font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--border);background:var(--s2);white-space:nowrap}
-tbody tr{border-bottom:1px solid var(--border);transition:background .1s}
-tbody tr:last-child{border:none}
-tbody tr:hover{background:rgba(255,255,255,.02)}
-td{padding:9px 12px;font-size:12px;vertical-align:middle}
-.td-bold{font-weight:700}
-.pill{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap}
-.pill-dot{width:4px;height:4px;border-radius:50%}
-.p-running{background:rgba(59,130,246,.12);color:var(--blue)}.p-running .pill-dot{background:var(--blue)}
-.p-pending{background:rgba(234,179,8,.12);color:var(--yellow)}.p-pending .pill-dot{background:var(--yellow)}
-.p-done,.p-completed{background:rgba(34,197,94,.12);color:var(--green)}.p-done .pill-dot,.p-completed .pill-dot{background:var(--green)}
-.p-failed{background:rgba(239,68,68,.12);color:var(--red)}.p-failed .pill-dot{background:var(--red)}
-.p-paused{background:rgba(249,115,22,.12);color:var(--orange)}.p-paused .pill-dot{background:var(--orange)}
-.p-waiting{background:rgba(168,85,247,.12);color:var(--purple)}.p-waiting .pill-dot{background:var(--purple)}
-.p-idle{background:rgba(100,116,139,.12);color:var(--muted)}
-.toggle{position:relative;width:36px;height:20px;flex-shrink:0;cursor:pointer}
-.toggle input{opacity:0;width:0;height:0}
-.tslider{position:absolute;inset:0;background:var(--s3);border-radius:10px;transition:.2s}
-.tslider:before{content:'';position:absolute;height:14px;width:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
-.toggle input:checked+.tslider{background:var(--green)}
-.toggle input:checked+.tslider:before{transform:translateX(16px)}
-.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.form-grid.three{grid-template-columns:1fr 1fr 1fr}
-.fg{display:flex;flex-direction:column;gap:4px}
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;
+  text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tbody tr{transition:background .14s}
+tbody tr:hover{background:var(--surface-2)}
+.tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.tag .tdot{width:6px;height:6px;border-radius:50%}
+.t-green{background:var(--green-soft);color:var(--green)} .t-green .tdot{background:var(--green)}
+.t-amber{background:var(--amber-soft);color:var(--amber)} .t-amber .tdot{background:var(--amber)}
+.t-red{background:var(--red-soft);color:var(--red)} .t-red .tdot{background:var(--red)}
+.t-blue{background:var(--primary-soft);color:var(--primary-ink)} .t-blue .tdot{background:var(--primary)}
+.t-gray{background:var(--surface-2);color:var(--muted);border:1px solid var(--border)} .t-gray .tdot{background:var(--faint)}
+.cell-strong{font-weight:600}
+.cell-link{color:var(--primary);font-weight:500}
+.cell-link:hover{text-decoration:underline}
+.cell-muted{color:var(--muted);font-size:12px}
+
+/* ---------- client cards ---------- */
+.client-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
+.client-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;
+  box-shadow:var(--shadow-sm);transition:all .2s ease}
+.client-card:hover{box-shadow:var(--shadow-md);transform:translateY(-2px);border-color:var(--border-2)}
+.cc-top{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.cc-avatar{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-family:'Space Grotesk';
+  font-weight:600;font-size:16px;color:#fff;flex-shrink:0}
+.cc-name{font-size:14.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cc-cat{font-size:12px;color:var(--muted)}
+.cc-stats{display:flex;gap:8px;margin-bottom:12px}
+.cc-stat{flex:1;background:var(--surface-2);border-radius:9px;padding:9px 10px;text-align:center}
+.cc-stat b{font-family:'Space Grotesk';font-size:17px;font-weight:600;display:block}
+.cc-stat span{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.cc-foot{display:flex;gap:7px}
+
+/* ---------- filters/toolbar ---------- */
+.toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.chip{padding:7px 13px;border-radius:20px;font-size:12.5px;font-weight:500;border:1px solid var(--border);
+  background:var(--surface);color:var(--ink-soft);transition:all .15s}
+.chip:hover{border-color:var(--border-2)}
+.chip.active{background:var(--ink);color:#fff;border-color:var(--ink)}
+.spacer{margin-left:auto}
+.pill-select{padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--surface);
+  color:var(--ink);font-weight:500;cursor:pointer}
+
+/* ---------- modal ---------- */
+.overlay{position:fixed;inset:0;background:rgba(23,26,33,.28);backdrop-filter:blur(3px);z-index:100;
+  display:none;align-items:flex-start;justify-content:center;padding:40px 20px;overflow-y:auto}
+.overlay.show{display:flex;animation:fade .2s}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal{background:var(--surface);border-radius:18px;width:100%;max-width:620px;box-shadow:var(--shadow-lg);
+  animation:pop .28s cubic-bezier(.22,.61,.36,1);overflow:hidden}
+@keyframes pop{from{opacity:0;transform:translateY(16px) scale(.98)}to{opacity:1;transform:none}}
+.modal-head{padding:20px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.modal-head h3{font-size:17px}
+.x-btn{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--muted);transition:all .15s}
+.x-btn:hover{background:var(--surface-2);color:var(--ink)}
+.modal-body{padding:22px;max-height:64vh;overflow-y:auto}
+.enrich-bar{display:flex;gap:9px;background:var(--primary-soft);border:1px solid #DAD5FB;border-radius:var(--r-sm);
+  padding:11px;margin-bottom:20px}
+.enrich-bar input{flex:1;border:1px solid #D5CFF9;border-radius:8px;padding:9px 12px;outline:none;background:#fff}
+.enrich-bar input:focus{border-color:var(--primary)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.fg{display:flex;flex-direction:column;gap:6px}
 .fg.full{grid-column:1/-1}
-.fg label{font-size:9px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
-.fi,.fs,.fta{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:8px 11px;color:var(--text);font-size:12px;outline:none;width:100%;font-family:inherit;transition:border .15s}
-.fi:focus,.fs:focus,.fta:focus{border-color:var(--blue)}
-.fi::placeholder,.fta::placeholder{color:var(--muted)}
-.fta{resize:vertical;min-height:80px}
-.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;align-items:center;justify-content:center;padding:16px;overflow-y:auto}
-.modal-bg.show{display:flex}
-.modal{background:var(--s1);border:1px solid var(--border);border-radius:14px;padding:22px;width:100%;max-width:640px;max-height:90vh;overflow-y:auto}
-.modal-title{font-size:15px;font-weight:700;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between}
-.alert-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;align-items:center;justify-content:center;padding:16px}
-.alert-overlay.show{display:flex;animation:pop .25s ease}
-@keyframes pop{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}
-.alert-box{background:var(--s1);border:2px solid var(--yellow);border-radius:20px;padding:28px 22px;width:100%;max-width:440px;text-align:center;box-shadow:0 0 80px rgba(234,179,8,.3)}
-@keyframes shake{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
-.alert-btns{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
-.alert-btns .btn{padding:14px;font-size:13px;border-radius:12px;justify-content:center}
-.bot-bar{background:var(--s1);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;flex-wrap:wrap;gap:12px}
-.bot-info{flex:1;min-width:200px}
-.progress{height:3px;background:var(--s3);border-radius:2px;overflow:hidden;margin-top:8px}
-.progress-fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--indigo));border-radius:2px;transition:width .5s}
-.notif-banner{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:10px;padding:12px 16px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px}
-.notif-banner.hidden{display:none}
-@keyframes sirenFlash{0%,100%{background:var(--bg)}33%{background:rgba(239,68,68,.07)}66%{background:rgba(234,179,8,.07)}}
-body.siren{animation:sirenFlash .4s infinite}
-.page{display:none}.page.active{display:block}
-.page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
-.page-title{font-size:18px;font-weight:800;letter-spacing:-.4px}
-.bot-badge{display:inline-block;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700}
-.bb-directory{background:rgba(59,130,246,.15);color:var(--blue)}.bb-profile{background:rgba(99,102,241,.15);color:var(--indigo)}.bb-blog{background:rgba(34,197,94,.15);color:var(--green)}.bb-guest{background:rgba(249,115,22,.15);color:var(--orange)}.bb-social{background:rgba(236,72,153,.15);color:var(--pink)}.bb-citation{background:rgba(6,182,212,.15);color:var(--cyan)}.bb-web2{background:rgba(168,85,247,.15);color:var(--purple)}
-.da{padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700}
-.da-h{background:rgba(34,197,94,.12);color:var(--green)}.da-m{background:rgba(234,179,8,.12);color:var(--yellow)}.da-l{background:rgba(239,68,68,.12);color:var(--red)}
-.client-avatar{width:42px;height:42px;border-radius:10px;background:rgba(99,102,241,.15);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0;overflow:hidden}
-.client-avatar img{width:100%;height:100%;object-fit:cover}
-.upload-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;background:var(--s2);border:1px dashed var(--border);border-radius:7px;cursor:pointer;font-size:11px;color:var(--muted);transition:all .15s}
-.upload-btn:hover{border-color:var(--blue);color:var(--blue)}
-.ss-thumb{width:60px;height:40px;border-radius:5px;object-fit:cover;border:1px solid var(--border);cursor:pointer}
-@media(max-width:768px){.sidebar{display:none}.stats-grid{grid-template-columns:repeat(2,1fr)}.form-grid{grid-template-columns:1fr}.bottom-nav{display:flex!important}.content{padding:12px 14px;padding-bottom:75px}}
-.bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--s1);border-top:1px solid var(--border);z-index:100;padding-bottom:env(safe-area-inset-bottom)}
-.bnav-btn{flex:1;padding:10px 4px;text-align:center;cursor:pointer;border:none;background:none;color:var(--muted);font-size:9px;font-weight:700;transition:color .15s;font-family:inherit}
-.bnav-btn .ni{display:block;font-size:20px;margin-bottom:1px}
-.bnav-btn.active,.bnav-btn:hover{color:var(--blue)}
-#toastContainer{position:fixed;bottom:80px;right:16px;z-index:9997;display:flex;flex-direction:column;gap:6px}
-.toast{background:var(--s1);border-radius:9px;padding:10px 14px;font-size:12px;font-weight:700;max-width:280px;transform:translateX(120%);transition:transform .3s;border-left:3px solid var(--blue)}
-.toast.show{transform:translateX(0)}
-.toast.t-green{border-color:var(--green);color:var(--green)}.toast.t-red{border-color:var(--red);color:var(--red)}.toast.t-blue{border-color:var(--blue);color:var(--blue)}.toast.t-yellow{border-color:var(--yellow);color:var(--yellow)}
-.empty{text-align:center;padding:40px 20px;color:var(--muted)}.empty-icon{font-size:40px;margin-bottom:10px}.empty-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px}
-::-webkit-scrollbar{width:3px;height:3px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.fg label{font-size:12px;font-weight:600;color:var(--ink-soft)}
+.fg input,.fg textarea,.fg select{border:1px solid var(--border-2);border-radius:9px;padding:9px 11px;outline:none;
+  background:var(--surface);transition:all .15s;color:var(--ink)}
+.fg input:focus,.fg textarea:focus,.fg select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+.modal-foot{padding:16px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:var(--surface-2)}
+
+/* ---------- toast ---------- */
+.toast-wrap{position:fixed;bottom:24px;right:24px;z-index:200;display:flex;flex-direction:column;gap:10px}
+.toast{background:var(--ink);color:#fff;padding:12px 16px;border-radius:var(--r-sm);font-size:13px;font-weight:500;
+  box-shadow:var(--shadow-lg);display:flex;align-items:center;gap:9px;animation:slideIn .3s cubic-bezier(.22,.61,.36,1);max-width:340px}
+.toast svg{width:17px;height:17px;flex-shrink:0}
+.toast.ok{background:#0F7A3D} .toast.err{background:#B93A3A} .toast.info{background:var(--primary-ink)}
+@keyframes slideIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+
+.section-gap{margin-top:22px}
+.report-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.rs{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);padding:14px 16px}
+.rs b{font-family:'Space Grotesk';font-size:22px;display:block;letter-spacing:-.02em}
+.rs span{font-size:12px;color:var(--muted)}
+
+@media(max-width:1080px){.stat-grid{grid-template-columns:repeat(2,1fr)}.grid-2{grid-template-columns:1fr}.report-summary{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.app{grid-template-columns:1fr}.sidebar{display:none}.form-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
+<div class="app">
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark"></div>
+      <div>
+        <div class="brand-name">Backlink Command</div>
+        <div class="brand-sub">Per4mance Guru</div>
+      </div>
+    </div>
+    <nav id="nav">
+      <div class="nav-item active" data-page="overview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        Overview
+      </div>
+      <div class="nav-item" data-page="clients">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0111 0"/><path d="M16 6.2a3 3 0 010 5.6M18.5 20a5.5 5.5 0 00-3-4.9"/></svg>
+        Clients <span class="nav-badge" id="nb-clients">0</span>
+      </div>
+      <div class="nav-item" data-page="bots">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="13.5" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="13.5" r="1.3" fill="currentColor" stroke="none"/></svg>
+        Bot Fleet <span class="nav-badge" id="nb-bots">11</span>
+      </div>
+      <div class="nav-item" data-page="backlinks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 15l6-6"/><path d="M11 6l1-1a4 4 0 015.6 5.6l-1 1"/><path d="M13 18l-1 1a4 4 0 01-5.6-5.6l1-1"/></svg>
+        Backlinks <span class="nav-badge" id="nb-links">0</span>
+      </div>
+      <div class="nav-item" data-page="tasks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 1.5-2M4 12l1 1 1.5-2M4 18l1 1 1.5-2"/></svg>
+        Task Queue <span class="nav-badge" id="nb-tasks">0</span>
+      </div>
+      <div class="nav-label">Library</div>
+      <div class="nav-item" data-page="sites">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
+        Site Directory
+      </div>
+      <div class="nav-item" data-page="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2l-.4-2.6H8.9l-.4 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 004 12a7 7 0 00.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2l.4 2.6h4.2l.4-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6A7 7 0 0019 12z"/></svg>
+        Settings
+      </div>
+    </nav>
+    <div class="side-foot">
+      <div id="conn-status"><span class="dot demo"></span>Demo data</div>
+      <div style="margin-top:6px;font-size:11px;color:var(--faint)">v2.1 · 11-bot fleet</div>
+    </div>
+  </aside>
 
-<div class="topbar">
-  <div class="brand"><div class="brand-logo">🤖</div>P4G SEO Platform v2</div>
-  <div style="display:flex;align-items:center;gap:8px">
-    <div class="live-dot" id="topDot"></div>
-    <span id="topStatus" style="font-size:11px;color:var(--muted)">Idle</span>
-    <span id="alertBadgeTop" style="display:none;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px">0</span>
-    <button class="btn btn-ghost btn-sm" onclick="openClientModal()">+ Client</button>
-    <button class="btn btn-blue btn-sm" onclick="showPage('alerts')">🚨 Alerts</button>
+  <!-- ============ MAIN ============ -->
+  <div class="main">
+    <header class="topbar">
+      <div class="page-title">
+        <h1 id="pt-title">Overview</h1>
+        <p id="pt-sub">Your backlink fleet at a glance</p>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input placeholder="Search clients, sites…" id="globalSearch"/>
+      </div>
+      <button class="btn btn-primary" onclick="openClientModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+        Add Client
+      </button>
+    </header>
+
+    <div class="content">
+      <!-- ======= OVERVIEW ======= -->
+      <section class="page active" id="page-overview">
+        <div class="stat-grid" id="statGrid"></div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head">
+              <div><h3>Bot Fleet</h3><div class="sub">Live status across all 11 bots</div></div>
+              <a class="link-btn" onclick="go('bots')">View all →</a>
+            </div>
+            <div class="panel-body"><div class="fleet" id="fleetMini"></div></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <div><h3>Needs your attention</h3><div class="sub">Calm queue — handle when free</div></div>
+            </div>
+            <div class="panel-body" id="attentionList"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div><h3>Recent backlinks</h3><div class="sub">Latest submissions across clients</div></div>
+            <a class="link-btn" onclick="go('backlinks')">Full report →</a>
+          </div>
+          <div class="table-wrap"><table id="recentLinks"></table></div>
+        </div>
+      </section>
+
+      <!-- ======= CLIENTS ======= -->
+      <section class="page" id="page-clients">
+        <div class="toolbar">
+          <div class="chip active">All clients</div>
+          <div class="spacer"></div>
+          <button class="btn btn-primary" onclick="openClientModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>Add Client</button>
+        </div>
+        <div class="client-grid" id="clientGrid"></div>
+      </section>
+
+      <!-- ======= BOTS ======= -->
+      <section class="page" id="page-bots">
+        <div class="panel"><div class="panel-body"><div class="fleet" id="fleetFull" style="grid-template-columns:repeat(3,1fr)"></div></div></div>
+      </section>
+
+      <!-- ======= BACKLINKS ======= -->
+      <section class="page" id="page-backlinks">
+        <div class="report-summary" id="reportSummary"></div>
+        <div class="toolbar">
+          <div class="chip active" onclick="filterLinks(this,'all')">All</div>
+          <div class="chip" onclick="filterLinks(this,'Live')">Live</div>
+          <div class="chip" onclick="filterLinks(this,'Pending')">Pending</div>
+          <div class="chip" onclick="filterLinks(this,'Failed')">Failed</div>
+          <div class="spacer"></div>
+          <button class="btn btn-ghost btn-sm" onclick="exportCSV()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Export CSV</button>
+        </div>
+        <div class="panel"><div class="table-wrap"><table id="linksTable"></table></div></div>
+      </section>
+
+      <!-- ======= TASKS ======= -->
+      <section class="page" id="page-tasks">
+        <div class="panel"><div class="table-wrap"><table id="tasksTable"></table></div></div>
+      </section>
+
+      <!-- ======= SITES ======= -->
+      <section class="page" id="page-sites"><div id="sitesWrap"></div></section>
+
+      <!-- ======= SETTINGS ======= -->
+      <section class="page" id="page-settings">
+        <div class="panel" style="max-width:640px">
+          <div class="panel-head"><div><h3>Connection</h3><div class="sub">Where this dashboard reads its data</div></div></div>
+          <div class="panel-body">
+            <div class="fg full" style="margin-bottom:16px">
+              <label>Dashboard API base URL</label>
+              <input id="apiBaseInput" value=""/>
+            </div>
+            <div class="fg full" style="margin-bottom:16px">
+              <label>Catch-all mail domain</label>
+              <input value="p4gbacklinkautomation.work.gd" readonly/>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveApiBase()">Save & reconnect</button>
+          </div>
+        </div>
+      </section>
+    </div>
   </div>
 </div>
 
-<!-- ALERT OVERLAY -->
-<div class="alert-overlay" id="alertOverlay">
-  <div class="alert-box">
-    <div style="font-size:52px;margin-bottom:12px;animation:shake .4s infinite">🚨</div>
-    <div style="font-size:18px;font-weight:800;color:var(--yellow);margin-bottom:16px">Manual Action Required!</div>
-    <div style="background:var(--s2);border-radius:10px;padding:14px;text-align:left;margin-bottom:4px">
-      <div style="margin-bottom:6px;font-size:12px"><span style="color:var(--muted)">👤 Client:</span> <strong id="aClient">—</strong></div>
-      <div style="margin-bottom:6px;font-size:12px"><span style="color:var(--muted)">🌐 Website:</span> <strong id="aWebsite">—</strong></div>
-      <div style="font-size:12px"><span style="color:var(--muted)">⚠️ Issue:</span> <strong id="aIssue">—</strong></div>
-    </div>
-    <div style="font-size:10px;color:var(--muted);margin-bottom:14px" id="aTime">—</div>
-    <div class="alert-btns">
-      <button class="btn btn-green" onclick="doAction('done')">✅ Done</button>
-      <button class="btn btn-yellow" onclick="doAction('skip')">⏭️ Skip</button>
-      <button class="btn btn-orange" onclick="doAction('retry')">🔄 Retry</button>
-      <button class="btn btn-red" onclick="doAction('stop')">🛑 Stop Bot</button>
-    </div>
-  </div>
-</div>
-
-<!-- CLIENT MODAL -->
-<div class="modal-bg" id="clientModal">
+<!-- ============ CLIENT MODAL ============ -->
+<div class="overlay" id="clientOverlay">
   <div class="modal">
-    <div class="modal-title"><span id="clientModalTitle">➕ Add Client</span><button class="btn btn-ghost btn-sm" onclick="closeModal('clientModal')">✕</button></div>
-
-    <!-- Logo/Banner Upload -->
-    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
-      <div>
-        <div style="font-size:9px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">LOGO</div>
-        <div class="client-avatar" id="logoPreview" style="width:60px;height:60px;font-size:20px">🏢</div>
-        <label class="upload-btn" style="margin-top:6px;width:60px;justify-content:center">
-          📁 <input type="file" id="logoFile" accept="image/*" style="display:none" onchange="previewImg(this,'logoPreview')"/>
-        </label>
+    <div class="modal-head">
+      <h3 id="cmTitle">Add Client</h3>
+      <button class="x-btn" onclick="closeClientModal()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <div class="modal-body">
+      <div class="enrich-bar">
+        <input id="enrichUrl" placeholder="Paste client website URL to auto-fill…"/>
+        <button class="btn btn-primary btn-sm" id="enrichBtn" onclick="runEnrich()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3l1.9 4.3L18 9l-4.1 1.7L12 15l-1.9-4.3L6 9l4.1-1.7z"/></svg>Auto-fill</button>
       </div>
-      <div>
-        <div style="font-size:9px;color:var(--muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">BANNER</div>
-        <div style="width:200px;height:60px;border-radius:8px;background:var(--s2);border:1px solid var(--border);overflow:hidden" id="bannerPreview">
-          <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px">No banner</div>
-        </div>
-        <label class="upload-btn" style="margin-top:6px">
-          📁 Upload Banner <input type="file" id="bannerFile" accept="image/*" style="display:none" onchange="previewImg(this,'bannerPreview')"/>
-        </label>
+      <div class="form-grid">
+        <div class="fg"><label>Client name *</label><input id="f-name" placeholder="Per4mance Guru"/></div>
+        <div class="fg"><label>Business name</label><input id="f-bizName" placeholder="PER4MANCE GURU"/></div>
+        <div class="fg"><label>Website *</label><input id="f-website" placeholder="https://…"/></div>
+        <div class="fg"><label>Category</label><input id="f-category" placeholder="Marketing Agency"/></div>
+        <div class="fg"><label>Email</label><input id="f-email" placeholder="hello@…"/></div>
+        <div class="fg"><label>Phone</label><input id="f-phone" placeholder="+91…"/></div>
+        <div class="fg"><label>City</label><input id="f-city"/></div>
+        <div class="fg"><label>Country</label><input id="f-country"/></div>
+        <div class="fg"><label>Primary keyword</label><input id="f-primaryKeyword"/></div>
+        <div class="fg"><label>Target location</label><input id="f-targetLocation"/></div>
+        <div class="fg full"><label>Short description</label><textarea id="f-shortDesc" rows="2"></textarea></div>
       </div>
     </div>
-
-    <div class="form-grid">
-      <div class="fg"><label>Client Name *</label><input class="fi" id="cl-name" placeholder="Per4mance Guru"/></div>
-      <div class="fg"><label>Business Name *</label><input class="fi" id="cl-bizname" placeholder="PER4MANCE GURU"/></div>
-      <div class="fg"><label>Website *</label><input class="fi" id="cl-website" placeholder="https://..."/></div>
-      <div class="fg"><label>Blog URL</label><input class="fi" id="cl-blog" placeholder="https://blog..."/></div>
-      <div class="fg"><label>Email *</label><input class="fi" id="cl-email" placeholder="email@..."/></div>
-      <div class="fg"><label>Phone</label><input class="fi" id="cl-phone" placeholder="+91..."/></div>
-      <div class="fg"><label>Mobile</label><input class="fi" id="cl-mobile" placeholder="+91..."/></div>
-      <div class="fg"><label>Category</label><input class="fi" id="cl-category" placeholder="Digital Marketing"/></div>
-      <div class="fg full"><label>Address</label><input class="fi" id="cl-address" placeholder="Street address"/></div>
-      <div class="fg"><label>City</label><input class="fi" id="cl-city" placeholder="Delhi"/></div>
-      <div class="fg"><label>State</label><input class="fi" id="cl-state" placeholder="Delhi"/></div>
-      <div class="fg"><label>Zip Code</label><input class="fi" id="cl-zip" placeholder="110001"/></div>
-      <div class="fg"><label>Country</label><input class="fi" id="cl-country" placeholder="India" value="India"/></div>
-      <div class="fg"><label>Primary Keyword</label><input class="fi" id="cl-kw1" placeholder="digital marketing agency"/></div>
-      <div class="fg"><label>Secondary Keyword</label><input class="fi" id="cl-kw2" placeholder="seo agency delhi"/></div>
-      <div class="fg"><label>Target Location</label><input class="fi" id="cl-location" placeholder="Delhi, India"/></div>
-      <div class="fg"><label>Facebook</label><input class="fi" id="cl-fb" placeholder="https://facebook.com/..."/></div>
-      <div class="fg"><label>Instagram</label><input class="fi" id="cl-ig" placeholder="https://instagram.com/..."/></div>
-      <div class="fg"><label>LinkedIn</label><input class="fi" id="cl-li" placeholder="https://linkedin.com/..."/></div>
-      <div class="fg"><label>YouTube</label><input class="fi" id="cl-yt" placeholder="https://youtube.com/..."/></div>
-      <div class="fg"><label>Twitter/X</label><input class="fi" id="cl-tw" placeholder="https://twitter.com/..."/></div>
-      <div class="fg full"><label>Short Description</label><input class="fi" id="cl-shortdesc" placeholder="One line description"/></div>
-      <div class="fg full"><label>Long Description</label><textarea class="fta" id="cl-longdesc" placeholder="Full business description..."></textarea></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('clientModal')">Cancel</button>
-      <button class="btn btn-blue" onclick="saveClient()">Save Client ✅</button>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeClientModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveClient()">Save client</button>
     </div>
   </div>
 </div>
 
-<!-- DIRECTORY MODAL -->
-<div class="modal-bg" id="dirModal">
-  <div class="modal" style="max-width:520px">
-    <div class="modal-title"><span id="dirModalTitle">➕ Add Directory</span><button class="btn btn-ghost btn-sm" onclick="closeModal('dirModal')">✕</button></div>
-    <div class="form-grid">
-      <div class="fg"><label>Name *</label><input class="fi" id="dir-name" placeholder="TradeIndia"/></div>
-      <div class="fg"><label>Website URL</label><input class="fi" id="dir-url" placeholder="https://..."/></div>
-      <div class="fg full"><label>Signup URL *</label><input class="fi" id="dir-signupUrl" placeholder="https://..."/></div>
-      <div class="fg full"><label>Login URL</label><input class="fi" id="dir-loginUrl" placeholder="https://..."/></div>
-      <div class="fg"><label>Category</label><input class="fi" id="dir-category" placeholder="B2B Directory"/></div>
-      <div class="fg"><label>DA</label><input class="fi" id="dir-da" type="number" placeholder="0-100"/></div>
-      <div class="fg"><label>Requirements</label>
-        <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--text);font-weight:500"><input type="checkbox" id="dir-captcha" style="accent-color:var(--blue)"/> CAPTCHA Required</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--text);font-weight:500"><input type="checkbox" id="dir-emailOTP" style="accent-color:var(--blue)"/> Email OTP Required</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;text-transform:none;letter-spacing:0;color:var(--text);font-weight:500"><input type="checkbox" id="dir-mobileOTP" style="accent-color:var(--blue)"/> Mobile OTP Required</label>
-        </div>
-      </div>
-      <div class="fg"><label>Active</label><label class="toggle" style="margin-top:8px"><input type="checkbox" id="dir-active" checked/><span class="tslider"></span></label></div>
-      <div class="fg full"><label>Notes</label><input class="fi" id="dir-notes" placeholder="Any notes..."/></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('dirModal')">Cancel</button>
-      <button class="btn btn-blue" onclick="saveDirectory()">Save ✅</button>
-    </div>
-  </div>
-</div>
-
-<!-- TASK MODAL -->
-<div class="modal-bg" id="taskModal">
-  <div class="modal" style="max-width:460px">
-    <div class="modal-title">➕ Add Task<button class="btn btn-ghost btn-sm" onclick="closeModal('taskModal')">✕</button></div>
-    <div class="form-grid">
-      <div class="fg"><label>Client *</label><select class="fs" id="task-client"></select></div>
-      <div class="fg"><label>Bot Type *</label>
-        <select class="fs" id="task-bottype">
-          <option value="directory">📋 Directory Bot</option><option value="profile">👤 Profile Bot</option>
-          <option value="blog">✍️ Blog Bot</option><option value="guest">📝 Guest Post Bot</option>
-          <option value="social">📱 Social Bot</option><option value="citation">📍 Citation Bot</option><option value="web2">🌐 Web 2.0 Bot</option>
-        </select>
-      </div>
-      <div class="fg full"><label>Website</label><input class="fi" id="task-website" placeholder="e.g. TradeIndia"/></div>
-      <div class="fg full"><label>Notes</label><input class="fi" id="task-notes" placeholder="Any notes..."/></div>
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-      <button class="btn btn-ghost" onclick="closeModal('taskModal')">Cancel</button>
-      <button class="btn btn-blue" onclick="saveTask()">Add Task ✅</button>
-    </div>
-  </div>
-</div>
-
-<!-- SCREENSHOT MODAL -->
-<div class="modal-bg" id="ssModal">
-  <div class="modal" style="max-width:800px;background:#000">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <div style="font-weight:700" id="ssModalTitle">Screenshot</div>
-      <button class="btn btn-ghost btn-sm" onclick="closeModal('ssModal')">✕</button>
-    </div>
-    <img id="ssModalImg" src="" style="width:100%;border-radius:8px"/>
-  </div>
-</div>
-
-<div class="layout">
-  <div class="sidebar">
-    <div class="sb-sec">
-      <div class="sb-lbl">Main</div>
-      <div class="sb-item active" onclick="showPage('overview')" id="nav-overview"><div class="sb-icon" style="background:rgba(59,130,246,.12)">📊</div><span class="sb-name">Overview</span></div>
-      <div class="sb-item" onclick="showPage('clients')" id="nav-clients"><div class="sb-icon" style="background:rgba(99,102,241,.12)">👥</div><span class="sb-name">Clients</span></div>
-      <div class="sb-item" onclick="showPage('tasks')" id="nav-tasks"><div class="sb-icon" style="background:rgba(234,179,8,.12)">📋</div><span class="sb-name">Task Queue</span><span class="sb-badge" id="sb-tasks" style="display:none">0</span></div>
-      <div class="sb-item" onclick="showPage('tracker')" id="nav-tracker"><div class="sb-icon" style="background:rgba(34,197,94,.12)">📈</div><span class="sb-name">Tracker</span></div>
-      <div class="sb-item" onclick="showPage('alerts')" id="nav-alerts"><div class="sb-icon" style="background:rgba(239,68,68,.12)">🚨</div><span class="sb-name">Alerts</span><span class="sb-badge" id="sb-alerts">0</span></div>
-    </div>
-    <div class="sb-sec">
-      <div class="sb-lbl">Databases</div>
-      <div class="sb-item" onclick="showPage('directories')" id="nav-directories"><div class="sb-icon" style="background:rgba(6,182,212,.12)">📋</div><span class="sb-name">Directories</span></div>
-      <div class="sb-item" onclick="showPage('profiles')" id="nav-profiles"><div class="sb-icon" style="background:rgba(168,85,247,.12)">👤</div><span class="sb-name">Profiles</span></div>
-      <div class="sb-item" onclick="showPage('blogs')" id="nav-blogs"><div class="sb-icon" style="background:rgba(249,115,22,.12)">✍️</div><span class="sb-name">Blogs</span></div>
-    </div>
-    <div class="sb-sec">
-      <div class="sb-lbl">Bot Control</div>
-      <div class="sb-item" onclick="showPage('botcontrol')" id="nav-botcontrol"><div class="sb-icon" style="background:rgba(34,197,94,.12)">🤖</div><span class="sb-name">Bot Engine</span></div>
-      <div class="sb-item" onclick="showPage('screenshots')" id="nav-screenshots"><div class="sb-icon" style="background:rgba(236,72,153,.12)">📸</div><span class="sb-name">Screenshots</span></div>
-      <div class="sb-item" onclick="showPage('logs')" id="nav-logs"><div class="sb-icon" style="background:rgba(100,116,139,.12)">📜</div><span class="sb-name">Live Logs</span></div>
-      <div class="sb-item" onclick="showPage('settings')" id="nav-settings"><div class="sb-icon" style="background:rgba(59,130,246,.12)">⚙️</div><span class="sb-name">Settings</span></div>
-    </div>
-  </div>
-
-  <div class="content">
-    <div id="toastContainer"></div>
-
-    <div class="notif-banner" id="notifBanner">
-      <div><div style="font-weight:700;font-size:13px">🔔 Enable Push Notifications</div><div style="font-size:11px;color:var(--muted);margin-top:2px">Zepto-style siren on phone when bot needs help</div></div>
-      <button class="btn btn-blue btn-sm" onclick="enableNotif()">Enable Now</button>
-    </div>
-
-    <!-- OVERVIEW -->
-    <div class="page active" id="page-overview">
-      <div class="page-header"><div class="page-title">📊 Overview</div><button class="btn btn-ghost btn-sm" onclick="loadAll()">🔄 Refresh</button></div>
-      <div class="stats-grid">
-        <div class="stat-card stat-blue"><div class="stat-label">Total Clients</div><div class="stat-val" id="st-clients">0</div></div>
-        <div class="stat-card stat-green"><div class="stat-label">Active Clients</div><div class="stat-val" id="st-active">0</div></div>
-        <div class="stat-card stat-purple"><div class="stat-label">Total Bots</div><div class="stat-val" id="st-totalbots">7</div></div>
-        <div class="stat-card stat-blue"><div class="stat-label">Running Bots</div><div class="stat-val" id="st-runningbots">0</div></div>
-        <div class="stat-card stat-yellow"><div class="stat-label">Pending Tasks</div><div class="stat-val" id="st-pending">0</div></div>
-        <div class="stat-card stat-green"><div class="stat-label">Completed</div><div class="stat-val" id="st-completed">0</div></div>
-        <div class="stat-card stat-red"><div class="stat-label">Failed</div><div class="stat-val" id="st-failed">0</div></div>
-        <div class="stat-card stat-cyan"><div class="stat-label">Today Backlinks</div><div class="stat-val" id="st-backlinks">0</div></div>
-        <div class="stat-card stat-indigo" style="--indigo:#6366f1" ><div class="stat-label">Today Profiles</div><div class="stat-val" id="st-profiles">0</div></div>
-        <div class="stat-card stat-orange"><div class="stat-label">Today Blogs</div><div class="stat-val" id="st-blogs">0</div></div>
-        <div class="stat-card stat-green"><div class="stat-label">Today Dir Subs</div><div class="stat-val" id="st-dirs">0</div></div>
-        <div class="stat-card stat-red"><div class="stat-label">Pending Alerts</div><div class="stat-val" id="st-palerts" style="color:var(--red)">0</div></div>
-      </div>
-      <div class="bot-bar">
-        <div class="bot-info">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><div class="live-dot" id="botDot"></div><span id="botStatusText" style="font-weight:700;font-size:13px">Idle</span></div>
-          <div id="botJobText" style="font-size:11px;color:var(--muted)">No active job</div>
-          <div class="progress"><div class="progress-fill" id="progressBar" style="width:0%"></div></div>
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">
-          <select class="fi btn-sm" id="quickClient" style="width:auto"><option value="">Select client...</option></select>
-          <select class="fi btn-sm" id="quickBot" style="width:auto">
-            <option value="directory">📋 Directory</option><option value="profile">👤 Profile</option>
-            <option value="blog">✍️ Blog</option><option value="guest">📝 Guest Post</option>
-          </select>
-          <button class="btn btn-green btn-sm" onclick="startBot()">▶️ Start</button>
-          <button class="btn btn-yellow btn-sm" onclick="pauseBot()">⏸️</button>
-          <button class="btn btn-red btn-sm" onclick="stopBot()">🛑</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">⚠️ Pending Alerts</div><button class="btn btn-ghost btn-sm" onclick="testSiren()">🧪 Test Siren</button></div>
-        <div id="overviewAlerts"><div class="empty"><div class="empty-icon">✅</div><div class="empty-title">All clear!</div></div></div>
-      </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">📈 Today's Submissions</div><button class="btn btn-ghost btn-sm" onclick="showPage('tracker')">View All →</button></div>
-        <div id="recentSubs"><div class="empty"><div class="empty-icon">📊</div><div class="empty-title">No submissions today</div></div></div>
-      </div>
-    </div>
-
-    <!-- CLIENTS -->
-    <div class="page" id="page-clients">
-      <div class="page-header"><div class="page-title">👥 Clients</div><button class="btn btn-blue btn-sm" onclick="openClientModal()">+ Add Client</button></div>
-      <div id="clientsList"></div>
-    </div>
-
-    <!-- TASKS -->
-    <div class="page" id="page-tasks">
-      <div class="page-header">
-        <div class="page-title">📋 Task Queue</div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="clearCompletedTasks()">🗑️ Clear Done</button>
-          <button class="btn btn-blue btn-sm" onclick="populateTaskModal();openModal('taskModal')">+ Add Task</button>
-        </div>
-      </div>
-      <div style="display:flex;gap:4px;margin-bottom:14px;overflow-x:auto;padding-bottom:2px">
-        <button class="btn btn-blue btn-sm" onclick="filterTasks('all',this)">All</button>
-        <button class="btn btn-ghost btn-sm" onclick="filterTasks('Pending',this)">⏳ Pending</button>
-        <button class="btn btn-ghost btn-sm" onclick="filterTasks('Running',this)">▶️ Running</button>
-        <button class="btn btn-ghost btn-sm" onclick="filterTasks('Completed',this)">✅ Done</button>
-        <button class="btn btn-ghost btn-sm" onclick="filterTasks('Failed',this)">❌ Failed</button>
-        <button class="btn btn-ghost btn-sm" onclick="filterTasks('Waiting Manual Action',this)">⚠️ Waiting</button>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Client</th><th>Bot</th><th>Website</th><th>Status</th><th>Created</th><th>Notes</th><th></th></tr></thead>
-          <tbody id="taskTableBody"></tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <!-- TRACKER -->
-    <div class="page" id="page-tracker">
-      <div class="page-header"><div class="page-title">📈 Submission Tracker</div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="filterTracker('all',this)">All</button>
-          <button class="btn btn-ghost btn-sm" onclick="filterTracker('directory',this)">Directory</button>
-          <button class="btn btn-ghost btn-sm" onclick="filterTracker('profile',this)">Profile</button>
-          <button class="btn btn-ghost btn-sm" onclick="filterTracker('blog',this)">Blog</button>
-          <button class="btn btn-ghost btn-sm" onclick="exportTracker()">📤 CSV</button>
-        </div>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Date</th><th>Client</th><th>Website</th><th>Bot</th><th>Status</th><th>Profile URL</th><th>Sub URL</th><th>Screenshot</th><th>Notes</th></tr></thead>
-          <tbody id="trackerTableBody"></tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <!-- ALERTS -->
-    <div class="page" id="page-alerts">
-      <div class="page-header"><div class="page-title">🚨 Alert Center</div></div>
-      <div id="alertsList"></div>
-    </div>
-
-    <!-- DIRECTORIES -->
-    <div class="page" id="page-directories">
-      <div class="page-header">
-        <div class="page-title">📋 Directory Database</div>
-        <div style="display:flex;gap:6px">
-          <button class="btn btn-ghost btn-sm" onclick="toggleAllDirs(true)">✅ All On</button>
-          <button class="btn btn-ghost btn-sm" onclick="toggleAllDirs(false)">❌ All Off</button>
-          <button class="btn btn-blue btn-sm" onclick="resetDirForm();openModal('dirModal')">+ Add</button>
-        </div>
-      </div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Bot</th><th>Name</th><th>DA</th><th>Category</th><th>CAPTCHA</th><th>Email OTP</th><th>Mobile OTP</th><th>Last Run</th><th>Status</th><th></th></tr></thead>
-          <tbody id="dirTableBody"></tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <!-- PROFILES -->
-    <div class="page" id="page-profiles">
-      <div class="page-header"><div class="page-title">👤 Profile Websites (13)</div><button class="btn btn-blue btn-sm" onclick="addProfilePrompt()">+ Add</button></div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Active</th><th>Name</th><th>DA</th><th>Requirements</th><th>Profile URL</th><th>Status</th><th>Signup</th><th></th></tr></thead>
-          <tbody id="profileTableBody"></tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <!-- BLOGS -->
-    <div class="page" id="page-blogs">
-      <div class="page-header"><div class="page-title">✍️ Blog Websites (7)</div><button class="btn btn-blue btn-sm" onclick="addBlogPrompt()">+ Add</button></div>
-      <div class="card" style="padding:0;overflow:hidden">
-        <div class="table-wrap"><table>
-          <thead><tr><th>Active</th><th>Name</th><th>DA</th><th>PA</th><th>Spam Score</th><th>Category</th><th>Signup</th><th>Submit</th><th></th></tr></thead>
-          <tbody id="blogTableBody"></tbody>
-        </table></div>
-      </div>
-    </div>
-
-    <!-- BOT ENGINE -->
-    <div class="page" id="page-botcontrol">
-      <div class="page-header"><div class="page-title">🤖 Bot Engine</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-        <div class="card">
-          <div class="card-header"><div class="card-title">⚡ Launch Bot</div></div>
-          <div class="fg" style="margin-bottom:10px"><label>Client</label><select class="fs" id="bc-client"><option value="">Select client...</option></select></div>
-          <div class="fg" style="margin-bottom:14px"><label>Bot Type</label>
-            <select class="fs" id="bc-bot">
-              <option value="directory">📋 Directory Bot</option><option value="profile">👤 Profile Bot</option>
-              <option value="blog">✍️ Blog Bot</option><option value="guest">📝 Guest Post Bot</option>
-              <option value="social">📱 Social Bot</option><option value="citation">📍 Citation Bot</option><option value="web2">🌐 Web 2.0 Bot</option>
-            </select>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <button class="btn btn-green btn-block" onclick="startBotFull()">▶️ Start</button>
-            <button class="btn btn-yellow btn-block" onclick="pauseBot()">⏸️ Pause</button>
-            <button class="btn btn-orange btn-block" onclick="resumeBot()">▶ Resume</button>
-            <button class="btn btn-red btn-block" onclick="stopBot()">🛑 Stop</button>
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-header"><div class="card-title">📊 Live Status</div></div>
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><div class="live-dot" id="botDot2"></div><div id="botStatusText2" style="font-weight:700">Idle</div></div>
-          <div id="botJobText2" style="font-size:11px;color:var(--muted);margin-bottom:10px">No active job</div>
-          <div class="progress"><div class="progress-fill" id="progressBar2" style="width:0%"></div></div>
-          <div style="margin-top:14px;font-size:11px;color:var(--muted)">
-            <div>Pending: <strong id="bc-pending" style="color:var(--yellow)">0</strong></div>
-            <div>Running: <strong id="bc-running" style="color:var(--blue)">0</strong></div>
-            <div>Completed: <strong id="bc-completed" style="color:var(--green)">0</strong></div>
-          </div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">🔗 Bot API Endpoints</div></div>
-        <div style="font-family:monospace;font-size:11px;color:var(--cyan);line-height:2.2;background:var(--bg);padding:12px;border-radius:7px">
-          GET  /api/bot/directories  ← enabled dirs<br/>
-          GET  /api/bot/profiles     ← enabled profiles<br/>
-          GET  /api/bot/blogs        ← enabled blogs<br/>
-          POST /api/bot/status       ← update status<br/>
-          POST /api/alerts/create    ← manual action<br/>
-          POST /api/screenshot       ← save screenshot<br/>
-          POST /api/submissions      ← log submission<br/>
-          POST /api/log              ← send log
-        </div>
-      </div>
-    </div>
-
-    <!-- SCREENSHOTS -->
-    <div class="page" id="page-screenshots">
-      <div class="page-header"><div class="page-title">📸 Screenshot Gallery</div></div>
-      <div id="screenshotsList">
-        <div class="empty"><div class="empty-icon">📸</div><div class="empty-title">No screenshots yet</div><div>Bot will save screenshots automatically</div></div>
-      </div>
-    </div>
-
-    <!-- LOGS -->
-    <div class="page" id="page-logs">
-      <div class="page-header"><div class="page-title">📜 Live Logs</div><button class="btn btn-ghost btn-sm" onclick="liveLogs=[];renderLogs()">🗑️ Clear</button></div>
-      <div class="card" style="padding:0"><div id="logList" style="font-family:monospace;font-size:11px;max-height:calc(100vh - 180px);overflow-y:auto;padding:4px 0"></div></div>
-    </div>
-
-    <!-- SETTINGS -->
-    <div class="page" id="page-settings">
-      <div class="page-header"><div class="page-title">⚙️ Settings</div></div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">🔔 Push Notifications</div></div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <div style="background:var(--bg);border-radius:7px;padding:12px"><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Status</div><div id="notifStatusSetting" style="font-weight:700">Checking...</div></div>
-          <button class="btn btn-blue btn-block" onclick="enableNotif()">🔔 Enable Siren Notifications</button>
-          <button class="btn btn-ghost btn-block" onclick="testSiren()">🧪 Test Siren Now</button>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-header"><div class="card-title">📡 Platform Info</div></div>
-        <div style="font-size:12px;color:var(--muted);line-height:2.2">
-          <div>Version: <strong style="color:var(--text)">2.0.0</strong></div>
-          <div>Server: <strong style="color:var(--text)">http://localhost:${PORT}</strong></div>
-          <div>Agency: <strong style="color:var(--text)">Per4mance Guru</strong></div>
-          <div>Screenshots: <strong style="color:var(--text)">/screenshots/{client}/{site}/</strong></div>
-          <div>Logs: <strong style="color:var(--text)">/logs/success.log, failed.log, manual-actions.log</strong></div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="bottom-nav">
-  <button class="bnav-btn active" id="bnav-overview" onclick="showPage('overview')"><span class="ni">📊</span>Home</button>
-  <button class="bnav-btn" id="bnav-clients" onclick="showPage('clients')"><span class="ni">👥</span>Clients</button>
-  <button class="bnav-btn" id="bnav-tasks" onclick="showPage('tasks')"><span class="ni">📋</span>Tasks</button>
-  <button class="bnav-btn" id="bnav-alerts" onclick="showPage('alerts')"><span class="ni">🚨</span>Alerts</button>
-  <button class="bnav-btn" id="bnav-botcontrol" onclick="showPage('botcontrol')"><span class="ni">🤖</span>Bot</button>
-</div>
+<div class="toast-wrap" id="toastWrap"></div>
 
 <script>
-let currentAlertId=null,editingClientId=null,editingDirId=null,sirenPlaying=false,sirenCtx=null,sirenStop=false,sw=null,liveLogs=[],taskFilter='all',trackerFilter='all';
+// ================= config =================
+let API_BASE = '';
+let LIVE = false;
 
-function showPage(name){
-  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.getElementById('page-'+name)?.classList.add('active');
-  document.querySelectorAll('.sb-item').forEach(b=>b.classList.remove('active'));
-  document.getElementById('nav-'+name)?.classList.add('active');
-  document.querySelectorAll('.bnav-btn').forEach(b=>b.classList.remove('active'));
-  document.getElementById('bnav-'+name)?.classList.add('active');
-  const loaders={clients:loadClientsPage,tasks:loadTasksPage,tracker:loadTrackerPage,alerts:loadAlertsPage,directories:loadDirsPage,profiles:loadProfilesPage,blogs:loadBlogsPage,botcontrol:populateBotSelects,logs:renderLogs,screenshots:loadScreenshots};
-  loaders[name]?.();
+const BOTS = [
+  ['directory','Directory','📋','var(--primary)'],['article','Article','📝','var(--cyan)'],
+  ['rss','RSS','📡','var(--orange)'],['microblog','Microblog','💬','var(--pink)'],
+  ['web2','Web 2.0','🌐','var(--violet)'],['guestpost','Guest Post','✍️','var(--green)'],
+  ['pptpdf','PPT / PDF','📄','var(--cyan)'],['image','Image','🖼️','var(--violet)'],
+  ['classified','Classified','📢','var(--amber)'],['pressrelease','Press Release','📰','var(--green)'],
+  ['profile','Profile','👤','var(--primary)']
+];
+const AVATAR_COLORS=['#4636E6','#0E8FA8','#DC6803','#C42B7A','#7C3AED','#12A150'];
+
+// ================= demo data (fallback) =================
+const DEMO = {
+  stats:{ totalClients:6, backlinksToday:18, runningBots:4, pendingTasks:12, totalLinks:247 },
+  clients:[
+    {id:'1',name:'Per4mance Guru',category:'Marketing Agency',website:'https://per4mance.guru',links:42,live:38},
+    {id:'2',name:'Mackly',category:'Kids Sleepwear',website:'https://mackly.lk',links:31,live:27},
+    {id:'3',name:'Assembly Travel',category:'Luggage & Travel',website:'https://assembly.com',links:28,live:22},
+    {id:'4',name:'Three Sixty Life',category:'Wellness',website:'https://threesixtylife.com',links:19,live:15},
+    {id:'5',name:'Hues Studio',category:'Fashion',website:'https://huesstudio.com',links:24,live:20},
+    {id:'6',name:'JJ Valaya',category:'Luxury Fashion',website:'https://jjvalaya.com',links:16,live:13}
+  ],
+  bots:{ directory:'running',rss:'running',profile:'running',article:'running',microblog:'idle',web2:'idle',
+    guestpost:'idle',pptpdf:'idle',image:'idle',classified:'idle',pressrelease:'idle' },
+  botStats:{ directory:8,rss:5,profile:3,article:2 },
+  links:[
+    {client:'Per4mance Guru',site:'Brownbook',type:'DoFollow',status:'Live',date:'Jul 7'},
+    {client:'Mackly',site:'HubPages',type:'DoFollow',status:'Live',date:'Jul 7'},
+    {client:'Assembly Travel',site:'Tumblr',type:'NoFollow',status:'Live',date:'Jul 7'},
+    {client:'Per4mance Guru',site:'AboutMe',type:'DoFollow',status:'Pending',date:'Jul 7'},
+    {client:'Hues Studio',site:'Medium',type:'DoFollow',status:'Live',date:'Jul 6'},
+    {client:'Three Sixty Life',site:'IssueWire',type:'NoFollow',status:'Failed',date:'Jul 6'},
+    {client:'Mackly',site:'Feedage',type:'DoFollow',status:'Live',date:'Jul 6'},
+    {client:'JJ Valaya',site:'Behance',type:'NoFollow',status:'Pending',date:'Jul 6'}
+  ],
+  tasks:[
+    {client:'Per4mance Guru',bot:'profile',site:'AboutMe',status:'Running'},
+    {client:'Mackly',bot:'directory',site:'Cylex',status:'Pending'},
+    {client:'Assembly Travel',bot:'article',site:'EzineArticles',status:'Pending'},
+    {client:'Hues Studio',bot:'rss',site:'FeedShark',status:'Running'}
+  ],
+  attention:[
+    {client:'Per4mance Guru',site:'AboutMe',issue:'Waiting on email confirmation'},
+    {client:'JJ Valaya',site:'Crunchbase',issue:'CAPTCHA needs a manual solve'}
+  ]
+};
+
+// ================= data layer =================
+async function api(path){
+  try{
+    const r=await fetch(API_BASE+path,{headers:{'Accept':'application/json'}});
+    if(!r.ok) throw 0; return await r.json();
+  }catch(e){ return null; }
 }
+let STATE={clients:[],links:[],tasks:[],bots:{},botStats:{},stats:{},attention:[]};
 
-function openModal(id){document.getElementById(id).classList.add('show');}
-function closeModal(id){document.getElementById(id).classList.remove('show');}
-document.querySelectorAll('.modal-bg').forEach(el=>el.addEventListener('click',e=>{if(e.target===el)el.classList.remove('show');}));
-
-function openClientModal(id=null){
-  editingClientId=id;
-  resetClientForm();
-  document.getElementById('clientModalTitle').textContent=id?'✏️ Edit Client':'➕ Add Client';
-  if(id){
-    api('/api/clients/'+id).then(c=>{
-      if(!c)return;
-      const m={'cl-name':c.name,'cl-bizname':c.bizName,'cl-website':c.website,'cl-blog':c.blog,'cl-email':c.email,'cl-phone':c.phone,'cl-mobile':c.mobile,'cl-category':c.category,'cl-address':c.address,'cl-city':c.city,'cl-state':c.state,'cl-zip':c.zip,'cl-country':c.country,'cl-kw1':c.primaryKeyword,'cl-kw2':c.secondaryKeyword,'cl-location':c.targetLocation,'cl-fb':c.facebook,'cl-ig':c.instagram,'cl-li':c.linkedin,'cl-yt':c.youtube,'cl-tw':c.twitter,'cl-shortdesc':c.shortDesc,'cl-longdesc':c.longDesc};
-      Object.entries(m).forEach(([k,v])=>{const el=document.getElementById(k);if(el)el.value=v||'';});
-      if(c.logo){const lp=document.getElementById('logoPreview');lp.innerHTML='';const img=document.createElement('img');img.src=c.logo;lp.appendChild(img);}
-    });
+async function loadAll(){
+  const stats=await api('/api/stats');
+  if(stats){ LIVE=true; setConn(true);
+    STATE.stats=stats;
+    STATE.bots={}; STATE.botStats={};
+    const bs=stats.botStatus||{};
+    if(bs.currentBot) STATE.bots[bs.currentBot]='running';
+    const clients=await api('/api/clients'); STATE.clients=Array.isArray(clients)?clients:[];
+    const subs=await api('/api/submissions'); STATE.links=Array.isArray(subs)?subs.map(mapSub):[];
+    const tasks=await api('/api/tasks'); STATE.tasks=Array.isArray(tasks)?tasks.map(mapTask):[];
+    const alerts=await api('/api/alerts/pending'); STATE.attention=Array.isArray(alerts)?alerts.map(a=>({client:a.client||'—',site:a.website||'—',issue:a.issue||'Manual action needed'})):[];
+  } else {
+    LIVE=false; setConn(false);
+    STATE.stats={totalClients:DEMO.clients.length,backlinksToday:DEMO.stats.backlinksToday,runningBots:DEMO.stats.runningBots,pendingTasks:DEMO.stats.pendingTasks,totalLinks:DEMO.stats.totalLinks};
+    STATE.clients=DEMO.clients; STATE.links=DEMO.links; STATE.tasks=DEMO.tasks;
+    STATE.bots=DEMO.bots; STATE.botStats=DEMO.botStats; STATE.attention=DEMO.attention;
   }
-  openModal('clientModal');
+  renderAll();
+}
+function mapSub(s){return{client:s.clientName||s.client||'—',site:s.website||s.site||'—',
+  type:s.dofollow===false?'NoFollow':'DoFollow',status:s.status||'Live',date:fmtDate(s.date||s.createdAt)};}
+function mapTask(t){return{client:t.clientName||t.client||'—',bot:t.botType||t.bot||'—',site:t.website||t.site||'—',status:t.status||'Pending'};}
+function fmtDate(d){if(!d)return'—';try{return new Date(d).toLocaleDateString('en-US',{month:'short',day:'numeric'})}catch{return'—'}}
+
+function setConn(live){
+  document.getElementById('conn-status').innerHTML= live
+    ? '<span class="dot live"></span>Live · connected'
+    : '<span class="dot demo"></span>Demo data';
 }
 
-function resetClientForm(){
-  ['cl-name','cl-bizname','cl-website','cl-blog','cl-email','cl-phone','cl-mobile','cl-category','cl-address','cl-city','cl-state','cl-zip','cl-kw1','cl-kw2','cl-location','cl-fb','cl-ig','cl-li','cl-yt','cl-tw','cl-shortdesc','cl-longdesc'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
-  document.getElementById('cl-country').value='India';
-  document.getElementById('logoPreview').innerHTML='🏢';
-  document.getElementById('bannerPreview').innerHTML='<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px">No banner</div>';
+// ================= render =================
+function renderAll(){ renderStats(); renderFleet(); renderAttention(); renderRecent();
+  renderClients(); renderLinks(); renderTasks(); renderSites(); renderBadges(); }
+
+function renderBadges(){
+  document.getElementById('nb-clients').textContent=STATE.clients.length;
+  document.getElementById('nb-links').textContent=STATE.stats.totalLinks||STATE.links.length;
+  document.getElementById('nb-tasks').textContent=STATE.tasks.filter(t=>t.status!=='Completed').length;
+}
+function renderStats(){
+  const s=STATE.stats;
+  const cards=[
+    ['Total clients',s.totalClients??STATE.clients.length,'clients','var(--primary)','var(--primary-soft)','M9 8a3 3 0 100-6 3 3 0 000 6zM3 20a6 6 0 0112 0'],
+    ['Backlinks today',s.backlinksToday??0,'+ today','var(--green)','var(--green-soft)','M9 15l6-6M11 6l1-1a4 4 0 015.6 5.6l-1 1'],
+    ['Running bots',s.runningBots??Object.values(STATE.bots).filter(x=>x==='running').length,'of 11 active','var(--cyan)','#E1F3F7','M4 8h16v11H4zM12 8V4'],
+    ['Pending tasks',s.pendingTasks??STATE.tasks.filter(t=>t.status==='Pending').length,'in queue','var(--amber)','var(--amber-soft)','M9 6h11M9 12h11M9 18h11']
+  ];
+  document.getElementById('statGrid').innerHTML=cards.map((c,i)=>\`
+    <div class="stat">
+      <div class="stat-top">
+        <div class="stat-ico" style="background:\${c[4]};color:\${c[3]}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="\${c[5]}"/></svg>
+        </div>
+        \${i===1?'<span class="stat-trend">▲ live</span>':''}
+      </div>
+      <div class="stat-val mono" data-count="\${c[1]}">0</div>
+      <div class="stat-label">\${c[0]} · <span style="color:var(--faint)">\${c[2]}</span></div>
+    </div>\`).join('');
+  animateCounts();
+}
+function animateCounts(){
+  document.querySelectorAll('[data-count]').forEach(el=>{
+    const target=+el.dataset.count||0; let cur=0; const step=Math.max(1,Math.ceil(target/28));
+    const t=setInterval(()=>{cur+=step;if(cur>=target){cur=target;clearInterval(t)}el.textContent=cur},22);
+  });
+}
+function botStatus(id){ return STATE.bots[id]||'idle'; }
+function fleetHTML(id,name,ico,color){
+  const st=botStatus(id); const cnt=STATE.botStats[id]||0;
+  return \`<div class="bot \${st==='running'?'running':''}">
+    <div class="bot-ico" style="background:\${color}1a">\${ico}</div>
+    <div class="bot-info">
+      <div class="bot-name">\${name} Bot</div>
+      <div class="bot-meta"><span class="pulse"></span>\${st==='running'?'Working now':'Idle'} · \${cnt} today</div>
+    </div>
+  </div>\`;
+}
+function renderFleet(){
+  document.getElementById('fleetMini').innerHTML=BOTS.slice(0,6).map(b=>fleetHTML(...b)).join('');
+  document.getElementById('fleetFull').innerHTML=BOTS.map(b=>fleetHTML(...b)).join('');
+}
+function renderAttention(){
+  const el=document.getElementById('attentionList');
+  if(!STATE.attention.length){
+    el.innerHTML=\`<div class="empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 6L9 17l-5-5"/></svg>
+      <h4>All clear</h4><p>No bot is waiting on you right now.</p></div>\`;
+    return;
+  }
+  el.innerHTML=STATE.attention.map((a,i)=>\`
+    <div class="attention">
+      <div class="att-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 001.7 3h16.6a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/></svg></div>
+      <div class="att-body">
+        <div class="att-title">\${a.site} · \${a.client}</div>
+        <div class="att-desc">\${a.issue}</div>
+        <div class="att-actions">
+          <button class="btn btn-ghost btn-sm" onclick="resolveAtt(\${i},'done')">Mark done</button>
+          <button class="btn btn-ghost btn-sm" onclick="resolveAtt(\${i},'skip')">Skip</button>
+        </div>
+      </div>
+    </div>\`).join('');
+}
+function resolveAtt(i,action){ STATE.attention.splice(i,1); renderAttention(); toast(action==='done'?'Marked done':'Skipped','ok'); }
+
+function statusTag(s){
+  const m={Live:'t-green',Completed:'t-green',Running:'t-blue',Pending:'t-amber',Failed:'t-red'};
+  return \`<span class="tag \${m[s]||'t-gray'}"><span class="tdot"></span>\${s}</span>\`;
+}
+function typeTag(t){ return t==='DoFollow'?'<span class="tag t-green"><span class="tdot"></span>DoFollow</span>':'<span class="tag t-gray"><span class="tdot"></span>NoFollow</span>'; }
+
+function renderRecent(){
+  const rows=STATE.links.slice(0,6);
+  document.getElementById('recentLinks').innerHTML=\`
+    <thead><tr><th>Client</th><th>Site</th><th>Type</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>\${rows.map(l=>\`<tr>
+      <td class="cell-strong">\${l.client}</td><td class="cell-link">\${l.site}</td>
+      <td>\${typeTag(l.type)}</td><td>\${statusTag(l.status)}</td><td class="cell-muted">\${l.date}</td>
+    </tr>\`).join('')||emptyRow(5)}</tbody>\`;
+}
+function emptyRow(cols){return \`<tr><td colspan="\${cols}"><div class="empty"><h4>Nothing yet</h4><p>Data will appear here as bots run.</p></div></td></tr>\`;}
+
+function renderClients(){
+  const q=(document.getElementById('globalSearch').value||'').toLowerCase();
+  const list=STATE.clients.filter(c=>!q||(c.name||'').toLowerCase().includes(q));
+  document.getElementById('clientGrid').innerHTML=list.map((c,i)=>{
+    const links=c.links??'—',live=c.live??'—';
+    const col=AVATAR_COLORS[i%AVATAR_COLORS.length];
+    const initials=(c.name||'?').split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase();
+    return \`<div class="client-card">
+      <div class="cc-top">
+        <div class="cc-avatar" style="background:\${col}">\${initials}</div>
+        <div style="min-width:0">
+          <div class="cc-name">\${c.name||'Unnamed'}</div>
+          <div class="cc-cat">\${c.category||'—'}</div>
+        </div>
+      </div>
+      <div class="cc-stats">
+        <div class="cc-stat"><b>\${links}</b><span>Backlinks</span></div>
+        <div class="cc-stat"><b>\${live}</b><span>Live</span></div>
+      </div>
+      <div class="cc-foot">
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="quickRun('\${(c.name||'').replace(/'/g,'')}')">Run bots</button>
+        <button class="btn btn-ghost btn-sm" onclick="toast('Opening \${(c.name||'').replace(/'/g,'')}…','info')">Details</button>
+      </div>
+    </div>\`;
+  }).join('')||\`<div class="empty" style="grid-column:1/-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0112 0"/></svg><h4>No clients yet</h4><p>Add your first client — paste a URL and let auto-fill do the rest.</p></div>\`;
 }
 
-function previewImg(input,previewId){
-  const file=input.files[0];if(!file)return;
-  const reader=new FileReader();
-  reader.onload=e=>{
-    const el=document.getElementById(previewId);
-    el.innerHTML='';
-    const img=document.createElement('img');
-    img.src=e.target.result;
-    img.style.cssText='width:100%;height:100%;object-fit:cover';
-    el.appendChild(img);
+let linkFilter='all';
+function renderLinks(){
+  const rows=STATE.links.filter(l=>linkFilter==='all'||l.status===linkFilter);
+  // summary
+  const total=STATE.links.length, live=STATE.links.filter(l=>l.status==='Live').length,
+    dofollow=STATE.links.filter(l=>l.type==='DoFollow').length, pending=STATE.links.filter(l=>l.status==='Pending').length;
+  document.getElementById('reportSummary').innerHTML=\`
+    <div class="rs"><b class="mono">\${STATE.stats.totalLinks||total}</b><span>Total backlinks</span></div>
+    <div class="rs"><b class="mono" style="color:var(--green)">\${live}</b><span>Live & verified</span></div>
+    <div class="rs"><b class="mono">\${dofollow}</b><span>DoFollow</span></div>
+    <div class="rs"><b class="mono" style="color:var(--amber)">\${pending}</b><span>Pending</span></div>\`;
+  document.getElementById('linksTable').innerHTML=\`
+    <thead><tr><th>Client</th><th>Site</th><th>Type</th><th>Status</th><th>Date</th></tr></thead>
+    <tbody>\${rows.map(l=>\`<tr>
+      <td class="cell-strong">\${l.client}</td><td class="cell-link">\${l.site}</td>
+      <td>\${typeTag(l.type)}</td><td>\${statusTag(l.status)}</td><td class="cell-muted">\${l.date}</td>
+    </tr>\`).join('')||emptyRow(5)}</tbody>\`;
+}
+function filterLinks(el,f){ document.querySelectorAll('#page-backlinks .chip').forEach(c=>c.classList.remove('active')); el.classList.add('active'); linkFilter=f; renderLinks(); }
+
+function renderTasks(){
+  document.getElementById('tasksTable').innerHTML=\`
+    <thead><tr><th>Client</th><th>Bot</th><th>Target site</th><th>Status</th><th></th></tr></thead>
+    <tbody>\${STATE.tasks.map(t=>{
+      const bot=BOTS.find(b=>b[0]===t.bot);
+      return \`<tr>
+        <td class="cell-strong">\${t.client}</td>
+        <td>\${bot?bot[2]+' '+bot[1]:t.bot}</td>
+        <td class="cell-link">\${t.site}</td>
+        <td>\${statusTag(t.status)}</td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="toast('Task detail','info')">View</button></td>
+      </tr>\`;}).join('')||emptyRow(5)}</tbody>\`;
+}
+
+function renderSites(){
+  const SITES={
+    directory:['Brownbook','Hotfrog','Cylex','Tupalo','Storeboard','Sulekha','IndiaMART'],
+    article:['HubPages','EzineArticles','ArticleBiz','SooperArticles','Medium','Hashnode'],
+    rss:['Feedage','FeedShark','Feedebee','RSSmountain'],
+    microblog:['Tumblr','Plurk','Diigo','Mastodon'],
+    web2:['WordPress','Blogger','Weebly','Site123','Strikingly'],
+    guestpost:['Medium','HubPages','Dev.to'],
+    pptpdf:['SlideShare','Issuu','Scribd','Calaméo','Yumpu'],
+    image:['Flickr','Pinterest','Imgur','500px'],
+    classified:['Locanto','ClassifiedAds','Adpost','Khojle'],
+    pressrelease:['OpenPR','PRLog','IssueWire','1888PressRelease'],
+    profile:['About.me','Gravatar','Behance','Crunchbase','Disqus']
   };
-  reader.readAsDataURL(file);
+  document.getElementById('sitesWrap').innerHTML=BOTS.map(b=>{
+    const sites=SITES[b[0]]||[];
+    return \`<div class="panel" style="margin-bottom:14px">
+      <div class="panel-head"><div style="display:flex;align-items:center;gap:10px">
+        <div class="bot-ico" style="background:\${b[3]}1a">\${b[2]}</div>
+        <div><h3>\${b[1]} Bot</h3><div class="sub">\${sites.length} sites in library</div></div>
+      </div></div>
+      <div class="panel-body" style="display:flex;flex-wrap:wrap;gap:8px">
+        \${sites.map(s=>\`<span class="tag t-gray"><span class="tdot"></span>\${s}</span>\`).join('')}
+      </div></div>\`;
+  }).join('');
 }
 
-async function saveClient(){
-  const name=document.getElementById('cl-name').value.trim();
-  if(!name){toast('Client name required!','red');return;}
-  const data={name,bizName:document.getElementById('cl-bizname').value.trim(),website:document.getElementById('cl-website').value.trim(),blog:document.getElementById('cl-blog').value.trim(),email:document.getElementById('cl-email').value.trim(),phone:document.getElementById('cl-phone').value.trim(),mobile:document.getElementById('cl-mobile').value.trim(),category:document.getElementById('cl-category').value.trim(),address:document.getElementById('cl-address').value.trim(),city:document.getElementById('cl-city').value.trim(),state:document.getElementById('cl-state').value.trim(),zip:document.getElementById('cl-zip').value.trim(),country:document.getElementById('cl-country').value.trim(),primaryKeyword:document.getElementById('cl-kw1').value.trim(),secondaryKeyword:document.getElementById('cl-kw2').value.trim(),targetLocation:document.getElementById('cl-location').value.trim(),facebook:document.getElementById('cl-fb').value.trim(),instagram:document.getElementById('cl-ig').value.trim(),linkedin:document.getElementById('cl-li').value.trim(),youtube:document.getElementById('cl-yt').value.trim(),twitter:document.getElementById('cl-tw').value.trim(),shortDesc:document.getElementById('cl-shortdesc').value.trim(),longDesc:document.getElementById('cl-longdesc').value.trim()};
-  let client;
-  if(editingClientId){client=await api('/api/clients/'+editingClientId,'PUT',data);toast('Client updated!','green');}
-  else{client=await api('/api/clients','POST',data);toast('"'+name+'" added!','green');}
-  // Upload logo/banner if selected
-  if(client?.id){
-    const logoFile=document.getElementById('logoFile').files[0];
-    const bannerFile=document.getElementById('bannerFile').files[0];
-    if(logoFile||bannerFile){
-      const fd=new FormData();
-      if(logoFile)fd.append('logo',logoFile);
-      if(bannerFile)fd.append('banner',bannerFile);
-      await fetch('/api/clients/'+(client.id||editingClientId)+'/upload',{method:'POST',body:fd});
-    }
+// ================= navigation =================
+const TITLES={overview:['Overview','Your backlink fleet at a glance'],clients:['Clients','Manage brands and their profiles'],
+  bots:['Bot Fleet','11 independent bots, live status'],backlinks:['Backlinks','Every link your bots have built'],
+  tasks:['Task Queue','What the fleet is working on'],sites:['Site Directory','Where each bot can post'],
+  settings:['Settings','Connection & preferences']};
+function go(page){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===page));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+page).classList.add('active');
+  document.getElementById('pt-title').textContent=TITLES[page][0];
+  document.getElementById('pt-sub').textContent=TITLES[page][1];
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+document.getElementById('nav').addEventListener('click',e=>{const it=e.target.closest('.nav-item');if(it)go(it.dataset.page);});
+document.getElementById('globalSearch').addEventListener('input',renderClients);
+
+// ================= client modal =================
+function openClientModal(){ document.getElementById('clientOverlay').classList.add('show'); }
+function closeClientModal(){ document.getElementById('clientOverlay').classList.remove('show'); clearForm(); }
+function clearForm(){ ['name','bizName','website','category','email','phone','city','country','primaryKeyword','targetLocation','shortDesc'].forEach(k=>{const el=document.getElementById('f-'+k);if(el)el.value='';}); document.getElementById('enrichUrl').value=''; }
+document.getElementById('clientOverlay').addEventListener('click',e=>{if(e.target.id==='clientOverlay')closeClientModal();});
+
+async function runEnrich(){
+  const url=document.getElementById('enrichUrl').value.trim();
+  if(!url){toast('Paste a website URL first','err');return;}
+  const btn=document.getElementById('enrichBtn'); btn.disabled=true; const orig=btn.innerHTML; btn.innerHTML='⏳ Reading…';
+  if(!LIVE){ // demo fill
+    setTimeout(()=>{ fill({name:'Per4mance Guru',bizName:'PER4MANCE GURU',website:url,category:'Marketing Agency',email:'hello@per4mance.guru',phone:'+91 98110 96907',city:'Delhi',country:'India',primaryKeyword:'digital marketing agency',targetLocation:'India, UAE, Canada',shortDesc:'AI-first performance marketing agency.'}); btn.disabled=false;btn.innerHTML=orig; toast('Auto-filled (demo)','ok'); },900);
+    return;
   }
-  closeModal('clientModal');
-  loadClientsPage();loadStats();
+  try{
+    const r=await fetch(API_BASE+'/api/clients/enrich',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    const d=await r.json();
+    if(d&&d.success){ fill(d.info||{}); toast('Auto-filled from website','ok'); }
+    else toast('Auto-fill failed: '+((d&&d.error)||'unknown'),'err');
+  }catch(e){ toast('Auto-fill error','err'); }
+  btn.disabled=false; btn.innerHTML=orig;
+}
+function fill(info){ Object.keys(info).forEach(k=>{const el=document.getElementById('f-'+k);if(el&&info[k])el.value=info[k];}); }
+async function saveClient(){
+  const name=document.getElementById('f-name').value.trim();
+  if(!name){toast('Client name is required','err');return;}
+  const payload={}; ['name','bizName','website','category','email','phone','city','country','primaryKeyword','targetLocation','shortDesc'].forEach(k=>payload[k]=document.getElementById('f-'+k).value.trim());
+  if(LIVE){ try{ await fetch(API_BASE+'/api/clients',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); }catch(e){} }
+  else { STATE.clients.unshift({id:Date.now()+'',name,category:payload.category,website:payload.website,links:0,live:0}); }
+  closeClientModal(); toast('Client saved','ok'); loadOrRender();
+}
+function loadOrRender(){ if(LIVE) loadAll(); else { renderClients(); renderBadges(); } }
+
+function quickRun(name){ toast('Queued bots for '+name,'ok'); }
+
+// ================= export =================
+function exportCSV(){
+  const rows=[['Client','Site','Type','Status','Date'],...STATE.links.map(l=>[l.client,l.site,l.type,l.status,l.date])];
+  const csv=rows.map(r=>r.map(c=>\`"\${(c||'').toString().replace(/"/g,'""')}"\`).join(',')).join('\\n');
+  const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download='p4g-backlinks.csv'; a.click();
+  toast('Report exported','ok');
 }
 
-async function loadClientsPage(){
-  const clients=await api('/api/clients');
-  const el=document.getElementById('clientsList');
-  if(!el)return;
-  if(!clients||clients.length===0){el.innerHTML='<div class="empty"><div class="empty-icon">👥</div><div class="empty-title">No clients yet</div><div>Click "+ Add Client" to get started</div></div>';return;}
-  el.innerHTML=clients.map(c=>\`
-    <div class="card" style="margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div class="client-avatar">\${c.logo?\`<img src="\${c.logo}"/>\`:c.name?.slice(0,2).toUpperCase()||'??'}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-weight:700;font-size:14px">\${c.name}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">\${c.bizName||''} · \${c.category||'—'} · \${c.website?'<a href="'+c.website+'" target="_blank" style="color:var(--blue)">Website ↗</a>':'No website'}</div>
-          <div style="font-size:11px;color:var(--muted)">\${c.email||''}\${c.city?' · '+c.city:''}\${c.country?' · '+c.country:''}</div>
-          \${c.shortDesc?\`<div style="font-size:11px;color:var(--muted);margin-top:2px">\${c.shortDesc}</div>\`:''}
-        </div>
-        <div style="display:flex;gap:4px;flex-shrink:0">
-          <button class="btn btn-ghost btn-sm" onclick="openClientModal('\${c.id}')">✏️</button>
-          <button class="btn btn-ghost btn-sm" onclick="duplicateClient('\${c.id}')">📋</button>
-          <button class="btn btn-red btn-sm" onclick="deleteClient('\${c.id}')">🗑️</button>
-        </div>
-      </div>
-    </div>
-  \`).join('');
-  populateClientSelects(clients);
+// ================= settings =================
+function saveApiBase(){ API_BASE=document.getElementById('apiBaseInput').value.trim()||API_BASE; toast('Reconnecting…','info'); loadAll(); }
+
+// ================= toast =================
+function toast(msg,type){
+  const t=document.createElement('div'); t.className='toast '+(type||'');
+  const ico=type==='ok'?'<path d="M20 6L9 17l-5-5"/>':type==='err'?'<path d="M18 6L6 18M6 6l12 12"/>':'<path d="M12 8v4M12 16h.01"/>';
+  t.innerHTML=\`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">\${ico}</svg>\${msg}\`;
+  document.getElementById('toastWrap').appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(30px)';t.style.transition='all .3s';setTimeout(()=>t.remove(),300)},2600);
 }
 
-async function deleteClient(id){if(!confirm('Delete?'))return;await fetch('/api/clients/'+id,{method:'DELETE'});loadClientsPage();loadStats();toast('Deleted.','red');}
-async function duplicateClient(id){await api('/api/clients/'+id+'/duplicate','POST');loadClientsPage();toast('Duplicated!','green');}
-function populateClientSelects(clients){
-  if(!clients)return;
-  ['quickClient','bc-client','task-client'].forEach(id=>{const el=document.getElementById(id);if(!el)return;el.innerHTML='<option value="">Select client...</option>'+clients.map(c=>\`<option value="\${c.id}">\${c.name}</option>\`).join('');});
-}
-
-async function loadDirsPage(){
-  const dirs=await api('/api/directories');
-  const tbody=document.getElementById('dirTableBody');if(!tbody)return;
-  if(!dirs||dirs.length===0){tbody.innerHTML='<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:20px">No directories</td></tr>';return;}
-  tbody.innerHTML=dirs.map(d=>\`
-    <tr>
-      <td><label class="toggle"><input type="checkbox" \${d.active?'checked':''} onchange="toggleDir('\${d.id}',this.checked)"/><span class="tslider"></span></label></td>
-      <td class="td-bold">\${d.name}</td>
-      <td><span class="da \${d.da>=50?'da-h':d.da>=30?'da-m':'da-l'}">DA \${d.da||'?'}</span></td>
-      <td style="color:var(--muted)">\${d.category||'—'}</td>
-      <td>\${d.requiresCaptcha?'<span style="color:var(--red)">⚠️ Yes</span>':'<span style="color:var(--muted)">No</span>'}</td>
-      <td>\${d.requiresEmailOTP?'<span style="color:var(--yellow)">📧 Yes</span>':'<span style="color:var(--muted)">No</span>'}</td>
-      <td>\${d.requiresMobileOTP?'<span style="color:var(--orange)">📱 Yes</span>':'<span style="color:var(--muted)">No</span>'}</td>
-      <td style="color:var(--muted);font-size:11px">\${d.lastRun||'Never'}</td>
-      <td><span class="pill \${d.active?'p-running':'p-idle'}">\${d.active?'Active':'Disabled'}</span></td>
-      <td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="editDir('\${d.id}')">✏️</button><button class="btn btn-red btn-sm" onclick="deleteDir('\${d.id}')">🗑️</button></div></td>
-    </tr>
-  \`).join('');
-}
-
-function resetDirForm(){editingDirId=null;['dir-name','dir-url','dir-signupUrl','dir-loginUrl','dir-category','dir-notes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});['dir-da'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});['dir-captcha','dir-emailOTP','dir-mobileOTP'].forEach(id=>{const el=document.getElementById(id);if(el)el.checked=false;});document.getElementById('dir-active').checked=true;document.getElementById('dirModalTitle').textContent='➕ Add Directory';}
-async function editDir(id){
-  const dirs=await api('/api/directories');const d=dirs.find(x=>x.id===id);if(!d)return;
-  editingDirId=id;
-  document.getElementById('dir-name').value=d.name||'';document.getElementById('dir-url').value=d.url||'';document.getElementById('dir-signupUrl').value=d.signupUrl||'';document.getElementById('dir-loginUrl').value=d.loginUrl||'';document.getElementById('dir-category').value=d.category||'';document.getElementById('dir-da').value=d.da||'';document.getElementById('dir-notes').value=d.notes||'';document.getElementById('dir-captcha').checked=!!d.requiresCaptcha;document.getElementById('dir-emailOTP').checked=!!d.requiresEmailOTP;document.getElementById('dir-mobileOTP').checked=!!d.requiresMobileOTP;document.getElementById('dir-active').checked=d.active!==false;
-  document.getElementById('dirModalTitle').textContent='✏️ Edit Directory';
-  openModal('dirModal');
-}
-async function saveDirectory(){
-  const name=document.getElementById('dir-name').value.trim();if(!name){toast('Name required!','red');return;}
-  const data={name,url:document.getElementById('dir-url').value.trim(),signupUrl:document.getElementById('dir-signupUrl').value.trim(),loginUrl:document.getElementById('dir-loginUrl').value.trim(),category:document.getElementById('dir-category').value.trim()||'Business Directory',da:parseInt(document.getElementById('dir-da').value)||0,notes:document.getElementById('dir-notes').value.trim(),requiresCaptcha:document.getElementById('dir-captcha').checked,requiresEmailOTP:document.getElementById('dir-emailOTP').checked,requiresMobileOTP:document.getElementById('dir-mobileOTP').checked,active:document.getElementById('dir-active').checked};
-  if(editingDirId){await fetch('/api/directories/'+editingDirId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});toast('Updated!','green');}
-  else{await api('/api/directories','POST',data);toast('"'+name+'" added!','green');}
-  closeModal('dirModal');editingDirId=null;loadDirsPage();
-}
-async function deleteDir(id){if(!confirm('Delete?'))return;await fetch('/api/directories/'+id,{method:'DELETE'});loadDirsPage();toast('Deleted.','red');}
-async function toggleDir(id,active){await fetch('/api/directories/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});toast(active?'Enabled ✅':'Disabled ❌',active?'green':'red');}
-async function toggleAllDirs(active){const dirs=await api('/api/directories');for(const d of dirs)await fetch('/api/directories/'+d.id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});loadDirsPage();toast(active?'All enabled!':'All disabled!',active?'green':'red');}
-
-async function loadProfilesPage(){
-  const profiles=await api('/api/profiles');
-  const tbody=document.getElementById('profileTableBody');if(!tbody)return;
-  tbody.innerHTML=(profiles||[]).map(p=>\`
-    <tr>
-      <td><label class="toggle"><input type="checkbox" \${p.active?'checked':''} onchange="toggleProfile('\${p.id}',this.checked)"/><span class="tslider"></span></label></td>
-      <td class="td-bold">\${p.name}</td>
-      <td><span class="da \${p.da>=50?'da-h':'da-m'}">DA \${p.da||'?'}</span></td>
-      <td style="color:var(--muted);font-size:11px">\${p.requirements||'—'}</td>
-      <td>\${p.profileUrl?\`<a href="\${p.profileUrl}" target="_blank" style="color:var(--blue);font-size:11px">View ↗</a>\`:'<span style="color:var(--muted)">—</span>'}</td>
-      <td><span class="pill \${p.status==='Done'?'p-done':'p-pending'}">\${p.status||'Pending'}</span></td>
-      <td><a href="\${p.signupUrl}" target="_blank" style="color:var(--blue);font-size:11px">Sign up ↗</a></td>
-      <td><button class="btn btn-red btn-sm" onclick="deleteProfile('\${p.id}')">🗑️</button></td>
-    </tr>
-  \`).join('');
-}
-async function toggleProfile(id,active){await fetch('/api/profiles/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});}
-async function deleteProfile(id){await fetch('/api/profiles/'+id,{method:'DELETE'});loadProfilesPage();}
-function addProfilePrompt(){const name=prompt('Profile website name:');if(!name)return;const url=prompt('Signup URL:');if(!url)return;const da=parseInt(prompt('DA:')||'0');const req=prompt('Requirements (e.g. Email, Google login):')||'Email';api('/api/profiles','POST',{name,signupUrl:url,da,requirements:req,active:true}).then(()=>{loadProfilesPage();toast('"'+name+'" added!','green');});}
-
-async function loadBlogsPage(){
-  const blogs=await api('/api/blogs');
-  const tbody=document.getElementById('blogTableBody');if(!tbody)return;
-  tbody.innerHTML=(blogs||[]).map(b=>\`
-    <tr>
-      <td><label class="toggle"><input type="checkbox" \${b.active?'checked':''} onchange="toggleBlog('\${b.id}',this.checked)"/><span class="tslider"></span></label></td>
-      <td class="td-bold">\${b.name}</td>
-      <td><span class="da \${b.da>=50?'da-h':'da-m'}">DA \${b.da||'?'}</span></td>
-      <td><span class="da da-m">PA \${b.pa||'?'}</span></td>
-      <td><span style="font-size:11px;color:\${b.spamScore>5?'var(--red)':b.spamScore>2?'var(--yellow)':'var(--green)'}">\${b.spamScore||0}%</span></td>
-      <td style="color:var(--muted);font-size:11px">\${b.category||'General'}</td>
-      <td><a href="\${b.signupUrl}" target="_blank" style="color:var(--blue);font-size:11px">Sign up ↗</a></td>
-      <td>\${b.submissionUrl?\`<a href="\${b.submissionUrl}" target="_blank" style="color:var(--blue);font-size:11px">Submit ↗</a>\`:'—'}</td>
-      <td><button class="btn btn-red btn-sm" onclick="deleteBlog('\${b.id}')">🗑️</button></td>
-    </tr>
-  \`).join('');
-}
-async function toggleBlog(id,active){await fetch('/api/blogs/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})});}
-async function deleteBlog(id){await fetch('/api/blogs/'+id,{method:'DELETE'});loadBlogsPage();}
-function addBlogPrompt(){const name=prompt('Blog website name:');if(!name)return;const url=prompt('Signup URL:');if(!url)return;const subUrl=prompt('Submission URL:')||'';const da=parseInt(prompt('DA:')||'0');const pa=parseInt(prompt('PA:')||'0');const spam=parseInt(prompt('Spam Score (0-100):')||'0');api('/api/blogs','POST',{name,signupUrl:url,submissionUrl:subUrl,da,pa,spamScore:spam,active:true}).then(()=>{loadBlogsPage();toast('"'+name+'" added!','green');});}
-
-async function loadTasksPage(){
-  const tasks=await api('/api/tasks');
-  const tbody=document.getElementById('taskTableBody');if(!tbody)return;
-  let filtered=tasks||[];
-  if(taskFilter!=='all')filtered=filtered.filter(t=>t.status===taskFilter);
-  if(filtered.length===0){tbody.innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px">No tasks</td></tr>';return;}
-  tbody.innerHTML=filtered.map(t=>\`
-    <tr>
-      <td class="td-bold">\${t.clientName||'—'}</td>
-      <td><span class="bot-badge bb-\${t.botType||'directory'}">\${t.botType||'dir'}</span></td>
-      <td>\${t.website||'—'}</td>
-      <td>\${statusPill(t.status)}</td>
-      <td style="color:var(--muted);font-size:11px">\${(t.createdAt||'').split(',')[0]||'—'}</td>
-      <td style="color:var(--muted);font-size:11px">\${t.notes||'—'}</td>
-      <td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="updateTask('\${t.id}','Completed')">✅</button><button class="btn btn-red btn-sm" onclick="deleteTask('\${t.id}')">🗑️</button></div></td>
-    </tr>
-  \`).join('');
-}
-function filterTasks(f,btn){taskFilter=f;document.querySelectorAll('#page-tasks .btn').forEach(b=>b.className=b===btn?'btn btn-blue btn-sm':'btn btn-ghost btn-sm');loadTasksPage();}
-async function updateTask(id,s){await fetch('/api/tasks/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s})});loadTasksPage();loadStats();}
-async function deleteTask(id){await fetch('/api/tasks/'+id,{method:'DELETE'});loadTasksPage();loadStats();}
-async function clearCompletedTasks(){await fetch('/api/tasks/completed/all',{method:'DELETE'});loadTasksPage();loadStats();toast('Cleared!','green');}
-function populateTaskModal(){api('/api/clients').then(cs=>populateClientSelects(cs));}
-async function saveTask(){const clientId=document.getElementById('task-client').value;const botType=document.getElementById('task-bottype').value;const website=document.getElementById('task-website').value.trim();const notes=document.getElementById('task-notes').value.trim();if(!clientId){toast('Select client!','red');return;}await api('/api/tasks','POST',{clientId,botType,website,notes,status:'Pending'});closeModal('taskModal');loadTasksPage();loadStats();toast('Task added!','green');}
-
-async function loadTrackerPage(){
-  const subs=await api('/api/submissions');
-  const tbody=document.getElementById('trackerTableBody');if(!tbody)return;
-  let filtered=subs||[];
-  if(trackerFilter!=='all')filtered=filtered.filter(s=>s.botType===trackerFilter);
-  if(filtered.length===0){tbody.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:20px">No submissions yet</td></tr>';return;}
-  tbody.innerHTML=filtered.map(s=>\`
-    <tr>
-      <td style="font-size:11px;color:var(--muted);white-space:nowrap">\${(s.date||'').split(',')[0]||'—'}</td>
-      <td class="td-bold">\${s.client||'—'}</td>
-      <td>\${s.website||'—'}</td>
-      <td><span class="bot-badge bb-\${s.botType||'directory'}">\${s.botType||'—'}</span></td>
-      <td>\${statusPill(s.status)}</td>
-      <td>\${s.profileUrl?\`<a href="\${s.profileUrl}" target="_blank" style="color:var(--blue);font-size:11px">View ↗</a>\`:'—'}</td>
-      <td>\${s.submissionUrl?\`<a href="\${s.submissionUrl}" target="_blank" style="color:var(--blue);font-size:11px">View ↗</a>\`:'—'}</td>
-      <td>\${s.screenshotPath?\`<img src="\${s.screenshotPath}" class="ss-thumb" onclick="viewSS('\${s.screenshotPath}','\${s.client} - \${s.website}')"/>\`:'—'}</td>
-      <td style="color:var(--muted);font-size:11px">\${s.notes||'—'}</td>
-    </tr>
-  \`).join('');
-}
-function filterTracker(f,btn){trackerFilter=f;document.querySelectorAll('#page-tracker .btn').forEach(b=>b.className=b===btn?'btn btn-blue btn-sm':'btn btn-ghost btn-sm');loadTrackerPage();}
-async function exportTracker(){const subs=await api('/api/submissions');const h=['Date','Client','Website','Bot','Status','Profile URL','Sub URL','Screenshot','Issue','Notes'];const rows=subs.map(s=>[s.date,s.client,s.website,s.botType,s.status,s.profileUrl,s.submissionUrl,s.screenshotPath,s.issue,s.notes].map(v=>\`"\${String(v||'').replace(/"/g,'""')}"\`).join(','));const csv=[h.join(','),...rows].join('\\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='submissions-'+Date.now()+'.csv';a.click();toast('Exported!','green');}
-
-function viewSS(src,title){document.getElementById('ssModalTitle').textContent=title;document.getElementById('ssModalImg').src=src;openModal('ssModal');}
-
-async function loadAlertsPage(){
-  const alerts=await api('/api/alerts');const el=document.getElementById('alertsList');if(!el)return;
-  if(!alerts||alerts.length===0){el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">No alerts yet</div></div>';return;}
-  el.innerHTML=alerts.map(a=>\`
-    <div class="card" style="margin-bottom:10px;border-color:\${a.status==='pending'?'var(--yellow)':'var(--border)'}">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="font-size:24px">\${a.status==='pending'?'🚨':'✅'}</div>
-        <div style="flex:1">
-          <div style="font-weight:700;font-size:13px">\${a.client} → \${a.website}</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:2px">\${a.issue} · \${a.createdAt}</div>
-          \${a.action?\`<div style="font-size:11px;color:var(--green);margin-top:2px">Action: \${a.action}</div>\`:''}
-        </div>
-        \${a.status==='pending'?\`<div style="display:flex;flex-direction:column;gap:4px">
-          <button class="btn btn-green btn-sm" onclick="currentAlertId='\${a.id}';doAction('done')">✅ Done</button>
-          <button class="btn btn-yellow btn-sm" onclick="currentAlertId='\${a.id}';doAction('skip')">⏭️ Skip</button>
-          <button class="btn btn-orange btn-sm" onclick="currentAlertId='\${a.id}';doAction('retry')">🔄 Retry</button>
-          <button class="btn btn-red btn-sm" onclick="currentAlertId='\${a.id}';doAction('stop')">🛑 Stop</button>
-        </div>\`:\`<span class="pill p-done">Resolved · \${a.action}</span>\`}
-      </div>
-    </div>
-  \`).join('');
-}
-
-async function loadScreenshots(){
-  const el=document.getElementById('screenshotsList');if(!el)return;
-  const subs=await api('/api/submissions');
-  const withSS=(subs||[]).filter(s=>s.screenshotPath);
-  if(withSS.length===0){el.innerHTML='<div class="empty"><div class="empty-icon">📸</div><div class="empty-title">No screenshots yet</div><div>Bot will save screenshots automatically</div></div>';return;}
-  el.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">'+withSS.map(s=>\`
-    <div class="card" style="padding:10px;cursor:pointer" onclick="viewSS('\${s.screenshotPath}','\${s.client} - \${s.website}')">
-      <img src="\${s.screenshotPath}" style="width:100%;border-radius:6px;margin-bottom:8px;height:120px;object-fit:cover"/>
-      <div style="font-weight:700;font-size:12px">\${s.website}</div>
-      <div style="font-size:11px;color:var(--muted)">\${s.client} · \${(s.date||'').split(',')[0]||'—'}</div>
-    </div>
-  \`).join('')+'</div>';
-}
-
-async function populateBotSelects(){const cs=await api('/api/clients');populateClientSelects(cs);}
-async function startBot(){const clientId=document.getElementById('quickClient')?.value;const botType=document.getElementById('quickBot')?.value||'directory';if(!clientId){toast('Select client!','red');return;}const r=await api('/api/bot/start','POST',{clientId,botType});toast('▶️ Bot started — '+r.tasks+' tasks!','green');loadStats();}
-async function startBotFull(){const clientId=document.getElementById('bc-client')?.value;const botType=document.getElementById('bc-bot')?.value||'directory';if(!clientId){toast('Select client!','red');return;}const r=await api('/api/bot/start','POST',{clientId,botType});toast('▶️ Started — '+r.tasks+' tasks!','green');loadStats();}
-async function pauseBot(){await fetch('/api/bot/pause',{method:'POST'});toast('⏸️ Paused','yellow');loadStats();}
-async function resumeBot(){await fetch('/api/bot/resume',{method:'POST'});toast('▶️ Resumed','green');loadStats();}
-async function stopBot(){await fetch('/api/bot/stop',{method:'POST'});toast('🛑 Stopped','red');loadStats();}
-
-async function registerSW(){if(!('serviceWorker' in navigator))return;try{const reg=await navigator.serviceWorker.register('/sw.js');sw=reg;navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type==='NOTIF_ACTION')handleNotifAction(e.data.action,e.data.data);});}catch(e){console.warn('SW:',e);}}
-
-async function enableNotif(){if(!('Notification' in window)){toast('Not supported','red');return;}const perm=await Notification.requestPermission();if(perm!=='granted'){toast('Please allow notifications!','red');return;}try{const reg=sw||await(async()=>{await registerSW();return sw;})();if(!reg){toast('SW not ready','red');return;}const kd=await(await fetch('/api/vapid-key')).json();const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToUint8(kd.publicKey)});const r=await fetch('/api/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub)});if((await r.json()).success){document.getElementById('notifBanner').classList.add('hidden');document.getElementById('notifStatusSetting').textContent='✅ Active — Siren ready!';document.getElementById('notifStatusSetting').style.color='var(--green)';toast('🔔 Siren enabled!','green');}}catch(e){toast('Failed: '+e.message,'red');}}
-async function testSiren(){await fetch('/api/test-siren',{method:'POST'});toast('🧪 Test siren sent!','blue');}
-
-function showAlertPopup(alert){currentAlertId=alert.id||alert.alertId;document.getElementById('aClient').textContent=alert.client||'—';document.getElementById('aWebsite').textContent=alert.website||'—';document.getElementById('aIssue').textContent=alert.issue||'—';document.getElementById('aTime').textContent=alert.createdAt||'';document.getElementById('alertOverlay').classList.add('show');document.body.classList.add('siren');document.title='🚨 ACTION NEEDED!';playSiren();}
-function closeAlertPopup(){document.getElementById('alertOverlay').classList.remove('show');document.body.classList.remove('siren');stopSiren();currentAlertId=null;document.title='P4G SEO Automation Platform';}
-async function doAction(action){if(!currentAlertId)return;stopSiren();const r=await fetch('/api/alerts/'+currentAlertId+'/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if((await r.json()).success){closeAlertPopup();toast('Action "'+action+'" sent!',action==='stop'?'red':'green');loadStats();loadAlertsPage();}}
-function handleNotifAction(action,data){if(!data)return;currentAlertId=data.alertId||data.id;if(['done','skip','retry','stop'].includes(action))doAction(action);else showAlertPopup(data);}
-function renderOverviewAlerts(alerts){const el=document.getElementById('overviewAlerts');if(!el)return;if(alerts.length===0){el.innerHTML='<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">All clear! No pending alerts.</div></div>';return;}el.innerHTML=alerts.map(a=>\`<div style="background:var(--s2);border:1px solid var(--yellow);border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px"><div style="flex:1"><div style="font-weight:700;font-size:12px">🚨 \${a.client} → \${a.website}</div><div style="font-size:11px;color:var(--muted);margin-top:2px">\${a.issue}</div></div><div style="display:flex;gap:4px"><button class="btn btn-green btn-sm" onclick="currentAlertId='\${a.id}';doAction('done')">✅</button><button class="btn btn-yellow btn-sm" onclick="currentAlertId='\${a.id}';doAction('skip')">⏭️</button><button class="btn btn-orange btn-sm" onclick="currentAlertId='\${a.id}';doAction('retry')">🔄</button><button class="btn btn-red btn-sm" onclick="currentAlertId='\${a.id}';doAction('stop')">🛑</button></div></div>\`).join('');}
-
-function playSiren(){if(sirenPlaying)return;sirenPlaying=true;sirenStop=false;if(navigator.vibrate){const vib=()=>{if(!sirenPlaying)return;navigator.vibrate([600,200,600,200,1000]);setTimeout(vib,2200);};vib();}try{sirenCtx=new(window.AudioContext||window.webkitAudioContext)();async function loop(){while(!sirenStop){for(const[f1,f2]of[[600,1400],[1400,600]]){if(sirenStop)break;const o=sirenCtx.createOscillator(),g=sirenCtx.createGain();o.connect(g);g.connect(sirenCtx.destination);o.type='sawtooth';o.frequency.setValueAtTime(f1,sirenCtx.currentTime);o.frequency.linearRampToValueAtTime(f2,sirenCtx.currentTime+0.5);g.gain.setValueAtTime(0,sirenCtx.currentTime);g.gain.linearRampToValueAtTime(0.5,sirenCtx.currentTime+0.1);g.gain.linearRampToValueAtTime(0,sirenCtx.currentTime+0.5);o.start(sirenCtx.currentTime);o.stop(sirenCtx.currentTime+0.5);await new Promise(r=>setTimeout(r,500));}}}loop();}catch(e){}}
-function stopSiren(){sirenPlaying=false;sirenStop=true;if(sirenCtx){try{sirenCtx.close();}catch{}sirenCtx=null;}if(navigator.vibrate)navigator.vibrate(0);}
-
-async function loadStats(){try{const d=await api('/api/stats');if(!d)return;const ids={'st-clients':d.totalClients,'st-active':d.activeClients,'st-totalbots':d.totalBots,'st-runningbots':d.runningBots,'st-pending':d.pendingTasks,'st-completed':d.completedTasks,'st-failed':d.failedTasks,'st-backlinks':d.todayBacklinks,'st-profiles':d.todayProfiles,'st-blogs':d.todayBlogs,'st-dirs':d.todayDirectories,'st-palerts':d.pendingAlerts};Object.entries(ids).forEach(([id,val])=>{const el=document.getElementById(id);if(el)el.textContent=val||0;});const pa=d.pendingAlerts||0;['sb-alerts','alertBadgeTop'].forEach(id=>{const el=document.getElementById(id);if(el){el.textContent=pa;el.style.display=pa>0?'inline-block':'none';}});const pt=d.pendingTasks||0;const sbT=document.getElementById('sb-tasks');if(sbT){sbT.textContent=pt;sbT.style.display=pt>0?'inline-block':'none';}updateBotUI(d.botStatus||{});if(pa>0){const alerts=await api('/api/alerts/pending');if(alerts?.length>0&&!currentAlertId)showAlertPopup(alerts[0]);renderOverviewAlerts(alerts||[]);}else{renderOverviewAlerts([]);if(currentAlertId)closeAlertPopup();}}catch{}}
-
-function updateBotUI(bs){const status=bs.status||'idle';['botDot','botDot2'].forEach(id=>{const el=document.getElementById(id);if(el)el.className='live-dot '+status;});document.getElementById('topDot')?.setAttribute('class','live-dot '+status);const smap={idle:'⏹️ Idle',running:'▶️ Running',paused:'⏸️ Paused',stopped:'🛑 Stopped'};const stxt=smap[status]||status;document.getElementById('topStatus').textContent=stxt;['botStatusText','botStatusText2'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=stxt;});const job=bs.currentJob||'No active job';['botJobText','botJobText2'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=job;});['bc-pending','bc-running','bc-completed'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=0;});}
-
-function renderLogs(){const el=document.getElementById('logList');if(!el)return;if(liveLogs.length===0){el.innerHTML='<div style="color:var(--muted);padding:12px;font-size:11px">Waiting for bot activity...</div>';return;}el.innerHTML=liveLogs.slice(0,200).map(l=>\`<div style="padding:5px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:flex-start"><span style="color:\${l.type==='ok'||l.type==='success'?'var(--green)':l.type==='error'?'var(--red)':l.type==='warn'?'var(--yellow)':'var(--blue)'};font-weight:700;flex-shrink:0">[\${(l.type||'info').toUpperCase()}]</span><span style="flex:1">\${l.msg}</span><span style="color:var(--muted);font-size:10px;flex-shrink:0">\${(l.time||'').split(',')[1]||''}</span></div>\`).join('');}
-
-function statusPill(s){const m={'Pending':'p-pending','Running':'p-running','Completed':'p-done','Done':'p-done','Failed':'p-failed','Paused':'p-paused','Waiting Manual Action':'p-waiting'};return \`<span class="pill \${m[s]||'p-idle'}"><span class="pill-dot"></span>\${s||'—'}</span>\`;}
-function b64ToUint8(b){const pad='='.repeat((4-b.length%4)%4);const raw=window.atob((b+pad).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
-async function api(url,method,data){try{const opts={method:method||'GET',headers:{'Content-Type':'application/json'}};if(data)opts.body=JSON.stringify(data);const r=await fetch(url,opts);return await r.json();}catch{return null;}}
-function toast(msg,color='green'){const colors={green:'var(--green)',red:'var(--red)',blue:'var(--blue)',yellow:'var(--yellow)'};const el=document.createElement('div');el.className='toast t-'+color;el.textContent=msg;document.getElementById('toastContainer').appendChild(el);setTimeout(()=>el.classList.add('show'),10);setTimeout(()=>{el.classList.remove('show');setTimeout(()=>el.remove(),400);},3500);}
-
-function connectSSE(){const es=new EventSource('/api/events');es.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.type==='ALERT'){showAlertPopup(d.alert);renderOverviewAlerts([d.alert]);loadStats();}else if(d.type==='ACTION_TAKEN'){if(d.alertId===currentAlertId)closeAlertPopup();loadStats();}else if(d.type==='LOG'){liveLogs.unshift(d.entry);renderLogs();}else if(d.type==='HEARTBEAT'){updateBotUI(d.status||{});}}catch{}};es.onerror=()=>setTimeout(connectSSE,3000);}
-
-async function loadAll(){await loadStats();const cs=await api('/api/clients');if(cs)populateClientSelects(cs);const ts=await api('/api/submissions/today');if(ts){const el=document.getElementById('recentSubs');if(el&&ts.length>0)el.innerHTML=ts.slice(0,5).map(s=>\`<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><span class="bot-badge bb-\${s.botType||'directory'}">\${s.botType||'dir'}</span><span style="flex:1;font-weight:600;font-size:12px">\${s.client} → \${s.website}</span>\${statusPill(s.status)}</div>\`).join('');}}
-
-if(Notification.permission==='granted')document.getElementById('notifBanner').classList.add('hidden');
-registerSW();loadAll();connectSSE();setInterval(loadStats,6000);
+// ================= boot =================
+document.getElementById('apiBaseInput').value=API_BASE;
+loadAll();
+setInterval(()=>{ if(LIVE) loadAll(); },15000); // gentle live refresh
 </script>
 </body>
-</html>`;
+</html>
+`;
 }
 
 app.listen(PORT, '0.0.0.0', () => {

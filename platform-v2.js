@@ -192,9 +192,127 @@ function getManifest() {
   return { name:'P4G SEO Platform', short_name:'P4G SEO', description:'Per4mance Guru SEO Automation Platform', start_url:'/', display:'standalone', background_color:'#080c14', theme_color:'#3b82f6', icons:[{src:'/icon.svg',sizes:'192x192',type:'image/svg+xml'},{src:'/icon.svg',sizes:'512x512',type:'image/svg+xml'}], shortcuts:[{name:'Dashboard',url:'/'},{name:'Clients',url:'/?page=clients'},{name:'Alerts',url:'/?page=alerts'},{name:'Bot Engine',url:'/?page=botcontrol'}] };
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+//  P4G ADD-ON — 11 bots in dropdowns + AI client Auto-fill
+//  Paste this block IN PLACE OF your existing 4-line  app.get('*', ...)  block.
+//  It is fully additive — your dashboard HTML is untouched; this only ADDS
+//  new bot types to the dropdowns and an Auto-fill button, at page load.
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── AI client auto-fill: reads a website + extracts business details ──
+app.post('/api/clients/enrich', async (req, res) => {
+  try {
+    let { url } = req.body;
+    if (!url) return res.json({ success: false, error: 'No URL provided' });
+    if (!process.env.ANTHROPIC_API_KEY) return res.json({ success: false, error: 'ANTHROPIC_API_KEY not set on server' });
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+
+    let html = '';
+    try {
+      const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; P4GBot/1.0)' } });
+      html = await r.text();
+    } catch (e) { html = ''; }
+
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .slice(0, 8000);
+
+    const prompt = 'From this business website, extract the company details as STRICT JSON only (no markdown, no preamble). Empty string if not found.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
+
+    const ar = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const data = await ar.json();
+    if (data.error) return res.json({ success: false, error: data.error.message || 'AI request failed' });
+
+    const raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').replace(/```json|```/g, '').trim();
+    let info = {};
+    try { info = JSON.parse(raw); } catch { return res.json({ success: false, error: 'Could not parse AI response' }); }
+    info.website = url;
+    res.json({ success: true, info });
+  } catch (e) { res.json({ success: false, error: e.message }); }
+});
+
+// ── the enhancement script injected into every page (adds bots + auto-fill) ──
+const P4G_ENHANCE = `<script>
+(function(){
+  try{
+    var BOTS=[["directory","📋 Directory Bot"],["article","📝 Article Bot"],["rss","📡 RSS Bot"],["microblog","💬 Microblog Bot"],["web2","🌐 Web 2.0 Bot"],["guestpost","✍️ Guest Post Bot"],["pptpdf","📄 PPT/PDF Bot"],["image","🖼️ Image Bot"],["classified","📢 Classified Bot"],["pressrelease","📰 Press Release Bot"],["profile","👤 Profile Bot"]];
+    function optsHTML(sel){var h="";for(var i=0;i<BOTS.length;i++){h+='<option value="'+BOTS[i][0]+'"'+(sel===BOTS[i][0]?" selected":"")+'>'+BOTS[i][1]+"</option>";}return h;}
+    function fixDropdowns(){
+      var sels=document.querySelectorAll("select");
+      for(var i=0;i<sels.length;i++){var s=sels[i];var isBot=false;
+        for(var j=0;j<s.options.length;j++){var v=s.options[j].value;if(v==="directory"||v==="profile"||v==="blog"||v==="guest"||v==="social"||v==="citation"||v==="web2"){isBot=true;break;}}
+        if(isBot&&!s.getAttribute("data-p4g")){var cur=s.value;s.innerHTML=optsHTML(cur);s.setAttribute("data-p4g","1");}}
+    }
+    var st=document.createElement("style");
+    st.textContent=".bb-article{background:rgba(59,130,246,.15);color:#3b82f6}.bb-rss{background:rgba(249,115,22,.15);color:#f97316}.bb-microblog{background:rgba(236,72,153,.15);color:#ec4899}.bb-pptpdf{background:rgba(6,182,212,.15);color:#06b6d4}.bb-image{background:rgba(168,85,247,.15);color:#a855f7}.bb-classified{background:rgba(234,179,8,.15);color:#eab308}.bb-pressrelease{background:rgba(34,197,94,.15);color:#22c55e}.bb-guestpost{background:rgba(249,115,22,.15);color:#f97316}.bb-web2{background:rgba(168,85,247,.15);color:#a855f7}";
+    document.head.appendChild(st);
+    function fieldKey(el){var lab="";if(el.labels&&el.labels[0])lab=el.labels[0].innerText;return ((el.name||"")+" "+(el.id||"")+" "+(el.placeholder||"")+" "+lab).toLowerCase();}
+    function fillModal(info){var f=document.querySelectorAll("input, textarea");var n=0;
+      for(var i=0;i<f.length;i++){var el=f[i];if(!el.offsetParent)continue;var t=(el.type||"").toLowerCase();
+        if(["hidden","submit","button","file","checkbox","radio"].indexOf(t)>=0)continue;var h=fieldKey(el);var val="";
+        if(/business.?name|company|brand|biz/.test(h))val=info.bizName||info.name;
+        else if(/full.?name|contact.?name|owner|^name| name/.test(h))val=info.name||info.bizName;
+        else if(/website|url|web/.test(h))val=info.website;
+        else if(/e-?mail/.test(h))val=info.email;
+        else if(/mobile|whatsapp/.test(h))val=info.mobile||info.phone;
+        else if(/phone|tel|number/.test(h))val=info.phone||info.mobile;
+        else if(/category|industry|sector|niche|type/.test(h))val=info.category;
+        else if(/address|street/.test(h))val=info.address;
+        else if(/city|town/.test(h))val=info.city;
+        else if(/state|province/.test(h))val=info.state;
+        else if(/zip|postal|pin/.test(h))val=info.zip;
+        else if(/country/.test(h))val=info.country;
+        else if(/primary.?key|keyword|main.?key/.test(h))val=info.primaryKeyword;
+        else if(/secondary.?key/.test(h))val=info.secondaryKeyword;
+        else if(/location|area|region/.test(h))val=info.targetLocation||info.city;
+        else if(/facebook|fb/.test(h))val=info.facebook;
+        else if(/instagram|insta|ig/.test(h))val=info.instagram;
+        else if(/linkedin/.test(h))val=info.linkedin;
+        else if(/youtube|yt/.test(h))val=info.youtube;
+        else if(/twitter/.test(h))val=info.twitter;
+        else if(/short.?desc|tagline|summary/.test(h))val=info.shortDesc;
+        else if(/desc|about|detail|bio/.test(h))val=info.longDesc||info.shortDesc;
+        if(val){el.value=val;el.dispatchEvent(new Event("input",{bubbles:true}));n++;}}
+      return n;}
+    function injectBar(){
+      var inputs=document.querySelectorAll("input");var target=null;
+      for(var i=0;i<inputs.length;i++){var h=fieldKey(inputs[i]);if(/website|url|web/.test(h)&&inputs[i].offsetParent){target=inputs[i];break;}}
+      if(!target)return;
+      var host=target.closest("form")||target.closest("[class*=modal],[id*=modal],[class*=Modal]")||target.parentNode;
+      if(!host||host.querySelector("#p4g-enrich-bar"))return;
+      var bar=document.createElement("div");bar.id="p4g-enrich-bar";
+      bar.style.cssText="display:flex;gap:8px;margin:10px 0;align-items:center;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:10px";
+      bar.innerHTML='<input id="p4g-enrich-url" placeholder="Paste client website URL to auto-fill..." style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid rgba(148,163,184,.35);background:transparent;color:inherit"/><button id="p4g-enrich-btn" type="button" style="padding:8px 14px;border-radius:6px;border:none;background:#3b82f6;color:#fff;font-weight:600;cursor:pointer;white-space:nowrap">🔍 Auto-fill</button>';
+      host.insertBefore(bar,host.firstChild);
+      document.getElementById("p4g-enrich-btn").onclick=async function(){
+        var u=(document.getElementById("p4g-enrich-url").value||target.value||"").trim();
+        if(!u){alert("Enter a website URL first");return;}
+        var b=this;b.disabled=true;b.textContent="⏳ Reading website...";
+        try{var res=await fetch("/api/clients/enrich",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:u})});var r=await res.json();
+          if(r&&r.success){var c=fillModal(r.info||{});b.textContent="✅ Filled "+c+" fields";}
+          else{b.textContent="❌ Failed";alert("Auto-fill failed: "+((r&&r.error)||"unknown"));}
+        }catch(e){b.textContent="❌ Error";alert("Error: "+e.message);}
+        setTimeout(function(){b.disabled=false;b.textContent="🔍 Auto-fill";},2500);};
+    }
+    setInterval(function(){try{fixDropdowns();injectBar();}catch(e){}},1200);
+    fixDropdowns();
+  }catch(e){console.log("p4g enhance err",e);}
+})();
+</script>`;
+
+// ── serve the dashboard with the enhancement appended ──
 app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(getDashboardHTML());
+  let __html = getDashboardHTML();
+  try { __html = __html.replace('</body>', P4G_ENHANCE + '</body>'); } catch (e) {}
+  res.send(__html);
 });
 
 

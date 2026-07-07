@@ -221,7 +221,7 @@ app.post('/api/clients/enrich', async (req, res) => {
 
     const prompt = 'From this business website, extract the company details as STRICT JSON only (no markdown fences, no preamble). Empty string if not found.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
 
-    const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
+    const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1024 } }),

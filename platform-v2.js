@@ -224,7 +224,7 @@ app.post('/api/clients/enrich', async (req, res) => {
     const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1024 } }),
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json' } }),
     });
     const data = await gr.json();
     if (data.error) return res.json({ success: false, error: data.error.message || 'Gemini request failed' });
@@ -233,7 +233,14 @@ app.post('/api/clients/enrich', async (req, res) => {
     try { raw = data.candidates[0].content.parts.map(p => p.text).join(''); } catch { raw = ''; }
     raw = raw.replace(/```json|```/g, '').trim();
     let info = {};
-    try { info = JSON.parse(raw); } catch { return res.json({ success: false, error: 'Could not parse AI response' }); }
+    try {
+      info = JSON.parse(raw);
+    } catch {
+      // model added extra text — grab the first {...} block
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (m) { try { info = JSON.parse(m[0]); } catch { info = null; } }
+      if (!info) return res.json({ success: false, error: 'Could not parse AI response', raw: raw.slice(0, 300) });
+    }
     info.website = url;
     res.json({ success: true, info });
   } catch (e) { res.json({ success: false, error: e.message }); }

@@ -193,18 +193,17 @@ function getManifest() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  P4G ADD-ON — 11 bots in dropdowns + AI client Auto-fill
+//  P4G ADD-ON (GEMINI / FREE) — 11 bots in dropdowns + AI client Auto-fill
 //  Paste this block IN PLACE OF your existing 4-line  app.get('*', ...)  block.
-//  It is fully additive — your dashboard HTML is untouched; this only ADDS
-//  new bot types to the dropdowns and an Auto-fill button, at page load.
+//  Uses Google Gemini (free tier). Needs env var:  GEMINI_API_KEY
 // ══════════════════════════════════════════════════════════════════════════
 
-// ── AI client auto-fill: reads a website + extracts business details ──
+// ── AI client auto-fill via Google Gemini (free) ──
 app.post('/api/clients/enrich', async (req, res) => {
   try {
     let { url } = req.body;
     if (!url) return res.json({ success: false, error: 'No URL provided' });
-    if (!process.env.ANTHROPIC_API_KEY) return res.json({ success: false, error: 'ANTHROPIC_API_KEY not set on server' });
+    if (!process.env.GEMINI_API_KEY) return res.json({ success: false, error: 'GEMINI_API_KEY not set on server' });
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
     let html = '';
@@ -220,17 +219,19 @@ app.post('/api/clients/enrich', async (req, res) => {
       .replace(/\s+/g, ' ')
       .slice(0, 8000);
 
-    const prompt = 'From this business website, extract the company details as STRICT JSON only (no markdown, no preamble). Empty string if not found.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
+    const prompt = 'From this business website, extract the company details as STRICT JSON only (no markdown fences, no preamble). Empty string if not found.\n\nURL: ' + url + '\n\nContent:\n' + text + '\n\nReturn exactly: {"name":"","bizName":"","category":"","email":"","phone":"","mobile":"","address":"","city":"","state":"","zip":"","country":"","primaryKeyword":"","secondaryKeyword":"","targetLocation":"","facebook":"","instagram":"","linkedin":"","youtube":"","twitter":"","shortDesc":"","longDesc":""}';
 
-    const ar = await fetch('https://api.anthropic.com/v1/messages', {
+    const gr = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + process.env.GEMINI_API_KEY, {
       method: 'POST',
-      headers: { 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-5', max_tokens: 1024, messages: [{ role: 'user', content: prompt }] }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 1024 } }),
     });
-    const data = await ar.json();
-    if (data.error) return res.json({ success: false, error: data.error.message || 'AI request failed' });
+    const data = await gr.json();
+    if (data.error) return res.json({ success: false, error: data.error.message || 'Gemini request failed' });
 
-    const raw = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').replace(/```json|```/g, '').trim();
+    let raw = '';
+    try { raw = data.candidates[0].content.parts.map(p => p.text).join(''); } catch { raw = ''; }
+    raw = raw.replace(/```json|```/g, '').trim();
     let info = {};
     try { info = JSON.parse(raw); } catch { return res.json({ success: false, error: 'Could not parse AI response' }); }
     info.website = url;
@@ -314,6 +315,7 @@ app.get('*', (req, res) => {
   try { __html = __html.replace('</body>', P4G_ENHANCE + '</body>'); } catch (e) {}
   res.send(__html);
 });
+
 
 
 function getDashboardHTML() {

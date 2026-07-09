@@ -124,15 +124,31 @@ app.get('/api/bot/directories',    (req, res) => res.json(db.directories.getActi
 app.get('/api/bot/profiles',       (req, res) => res.json(db.profiles.getActive()));
 app.get('/api/bot/blogs',          (req, res) => res.json(db.blogs.getActive()));
 app.post('/api/bot/status',        (req, res) => { queue.updateStatus(req.body); res.json({ success: true }); });
+const P4G_SITE_NAMES = {
+  directory:    ['Brownbook','Hotfrog','Cylex','Tupalo','Storeboard','Sulekha','IndiaMART','ExportersIndia','FreeListingIndia'],
+  article:      ['HubPages','EzineArticles','ArticleBiz','SooperArticles','SelfGrowth','ApSense','Medium','Hashnode','Bloglovin'],
+  rss:          ['Feedage','FeedShark','Feedebee','RSSmountain','FeedmapNet'],
+  microblog:    ['Tumblr','Plurk','Diigo','Mastodon'],
+  web2:         ['WordPress','Blogger','Weebly','Site123','Strikingly','Jimdo'],
+  guestpost:    ['Medium','HubPages','DevTo'],
+  pptpdf:       ['SlideShare','Issuu','Scribd','Calameo','edocr','Yumpu'],
+  image:        ['Flickr','Pinterest','Imgur','Ipernity','500px'],
+  classified:   ['Locanto','ClassifiedAds','Adpost','Storeboard','FreeAdsTime','Khojle'],
+  pressrelease: ['OpenPR','PRLog','IssueWire','PRFree','1888PressRelease'],
+  profile:      ['AboutMe','Gravatar','Behance','Crunchbase','Disqus','Slides'],
+};
 app.post('/api/bot/start',         (req, res) => {
   const { clientId, botType } = req.body;
   const client = db.clients.getById(clientId);
   if (!client) return res.json({ success: false, error: 'Client not found' });
-  const sites = botType === 'directory' ? db.directories.getActive()
-              : botType === 'profile'   ? db.profiles.getActive()
-              : botType === 'blog'      ? db.blogs.getActive()
-              : db.directories.getActive();
-  sites.forEach(s => db.tasks.add({ clientId, clientName: client.name, botType, website: s.name, websiteId: s.id, status: 'Pending' }));
+  let sites = [];
+  if (P4G_SITE_NAMES[botType])       sites = P4G_SITE_NAMES[botType].map(name => ({ name }));
+  else if (botType === 'directory')  sites = db.directories.getActive();
+  else if (botType === 'profile')    sites = db.profiles.getActive();
+  else if (botType === 'blog')       sites = db.blogs.getActive();
+  else                               sites = db.directories.getActive();
+  if (!sites.length) sites = [{ name: '' }];
+  sites.forEach(s => db.tasks.add({ clientId, clientName: client.name, botType, website: s.name, site: s.name, websiteId: s.id, status: 'Pending' }));
   queue.updateStatus({ status: 'running', currentBot: botType, client: client.name });
   queue.broadcast({ type: 'BOT_STARTED', clientId, botType, tasks: sites.length });
   res.json({ success: true, tasks: sites.length });
@@ -867,7 +883,7 @@ function renderClients(){
         <div class="cc-stat"><b>\${live}</b><span>Live</span></div>
       </div>
       <div class="cc-foot">
-        <button class="btn btn-primary btn-sm" style="flex:1" onclick="quickRun('\${(c.name||'').replace(/'/g,'')}')">Run bots</button>
+        <button class="btn btn-primary btn-sm" style="flex:1" onclick="quickRun('\${c.id||''}','\${(c.name||'').replace(/'/g,'')}')">Run bots</button>
         <button class="btn btn-ghost btn-sm" onclick="toast('Opening \${(c.name||'').replace(/'/g,'')}…','info')">Details</button>
       </div>
     </div>\`;
@@ -984,7 +1000,39 @@ async function saveClient(){
 }
 function loadOrRender(){ if(LIVE) loadAll(); else { renderClients(); renderBadges(); } }
 
-function quickRun(name){ toast('Queued bots for '+name,'ok'); }
+function quickRun(cid,name){
+  if(!cid){ toast('Save the client first','err'); return; }
+  var old=document.getElementById('botPicker'); if(old) old.remove();
+  var wrap=document.createElement('div'); wrap.id='botPicker';
+  wrap.style.cssText='position:fixed;inset:0;background:rgba(23,26,33,.28);backdrop-filter:blur(3px);z-index:150;display:flex;align-items:center;justify-content:center;padding:20px';
+  var box=document.createElement('div');
+  box.style.cssText='background:#fff;border-radius:16px;box-shadow:0 12px 32px rgba(23,26,33,.18);width:100%;max-width:460px;overflow:hidden';
+  var html='<div style="padding:16px 18px;border-bottom:1px solid #EAECF1;font-weight:600;font-size:15px;font-family:Space Grotesk,sans-serif">Run a bot for '+name+'</div>';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:16px">';
+  for(var i=0;i<BOTS.length;i++){ var b=BOTS[i];
+    html+='<button data-bot="'+b[0]+'" style="display:flex;align-items:center;gap:8px;padding:10px 11px;border:1px solid #EAECF1;border-radius:10px;background:#FBFCFD;cursor:pointer;font-size:13px;font-weight:500;text-align:left;transition:all .15s"><span style="font-size:15px">'+b[2]+'</span>'+b[1]+' Bot</button>';
+  }
+  html+='</div><div style="padding:12px 16px;border-top:1px solid #EAECF1;text-align:right"><button id="bpCancel" style="padding:8px 14px;border:1px solid #EAECF1;border-radius:8px;background:#fff;font-weight:600;cursor:pointer">Cancel</button></div>';
+  box.innerHTML=html;
+  wrap.appendChild(box); document.body.appendChild(wrap);
+  wrap.addEventListener('click',function(e){ if(e.target===wrap) wrap.remove(); });
+  document.getElementById('bpCancel').addEventListener('click',function(){ wrap.remove(); });
+  box.querySelectorAll('button[data-bot]').forEach(function(btn){
+    btn.addEventListener('mouseenter',function(){ btn.style.borderColor='#4636E6'; btn.style.background='#EEECFD'; });
+    btn.addEventListener('mouseleave',function(){ btn.style.borderColor='#EAECF1'; btn.style.background='#FBFCFD'; });
+    btn.addEventListener('click',function(){ startBot(cid, btn.getAttribute('data-bot'), btn); });
+  });
+}
+async function startBot(cid,botType,btn){
+  if(btn){ btn.disabled=true; btn.style.opacity=0.5; btn.textContent='Starting…'; }
+  try{
+    var r=await fetch(API_BASE+'/api/bot/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({clientId:cid,botType:botType})});
+    var d=await r.json();
+    var p=document.getElementById('botPicker'); if(p) p.remove();
+    if(d&&d.success){ toast('Queued '+d.tasks+' task(s) — your bot will pick them up','ok'); if(LIVE) loadAll(); }
+    else toast('Could not start: '+((d&&d.error)||'unknown'),'err');
+  }catch(e){ toast('Start failed — check connection','err'); }
+}
 
 // ================= export =================
 function exportCSV(){
